@@ -3,8 +3,6 @@ version = "0.1.0"
 defaultTargets = ["mdp"]
 moreLinkArgs = ["-L./.lake/packages/LeanCopilot/.lake/build/lib", "-lctranslate2"]
 
-
-
 [[lean_lib]]
 name = "Mdp"
 
@@ -15,9 +13,9 @@ root = "Main"
 [[require]]
 name = "mathlib"
 scope = "leanprover-community"
-rev = "v4.19.0"
+rev = "v4.26.0"
 
 [[require]]
 name = "LeanCopilot"
 git = "https://github.com/lean-dojo/LeanCopilot.git"
-rev = "v4.19.0"
+rev = "v4.26.0"
