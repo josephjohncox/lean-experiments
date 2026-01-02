@@ -1,8 +1,13 @@
 -- Proof strategies for monad laws over GADT probability monads
 import Mathlib.CategoryTheory.Monad.Basic
 import Mathlib.Data.Real.Basic
+import Mathlib.Data.Finset.Basic
+import Mathlib.Algebra.BigOperators.Ring.Finset
+import Mathlib.Data.Fintype.BigOperators
 
 universe u v
+
+open scoped BigOperators
 
 -- Normalization by evaluation (NbE)
 namespace NormalizationApproach
@@ -116,27 +121,77 @@ end QuotientInductiveInductive
 namespace ShallowDeep
 
 -- Shallow probability measure
-structure Prob (α : Type u) where
+structure Prob (α : Type u) [Fintype α] where
   measure : α → ℝ
-  normalized : ∀ s : Set α, sorry -- Sum/integral over s equals probability of s
+  normalized : (∑ a, measure a) = 1
+
+@[ext] theorem Prob.ext {α : Type u} [Fintype α] {p q : Prob α}
+  (h : ∀ a, p.measure a = q.measure a) : p = q := by
+  cases p with
+  | mk pmeasure pnorm =>
+      cases q with
+      | mk qmeasure qnorm =>
+          have hmeasure : pmeasure = qmeasure := by
+            funext a
+            exact h a
+          cases hmeasure
+          have hnorm : pnorm = qnorm := by
+            apply Subsingleton.elim
+          cases hnorm
+          rfl
 
 -- Deep constructors
-def dirac {α : Type u} [DecidableEq α] (a : α) : Prob α :=
-  ⟨fun x => if x = a then 1 else 0, sorry⟩
+def dirac {α : Type u} [Fintype α] [DecidableEq α] (a : α) : Prob α :=
+  ⟨fun x => if x = a then 1 else 0, by
+    classical
+    simp⟩
 
-def discrete {α : Type u} [DecidableEq α] (l : List (α × ℝ)) : Prob α :=
-  ⟨fun x => (l.filter (fun p => p.1 = x)).map (·.2) |>.sum, sorry⟩
+def discrete {α : Type u} [Fintype α] (pmf : α → ℝ) (hsum : (∑ a, pmf a) = 1) : Prob α :=
+  ⟨pmf, hsum⟩
 
 -- Bind operation (outline)
-noncomputable def bind {α β : Type u} (m : Prob α) (f : α → Prob β) : Prob β :=
-  ⟨fun b => sorry, -- ∫ₐ m.measure a * (f a).measure b
-   sorry⟩
+noncomputable def bind {α β : Type u} [Fintype α] [Fintype β] (m : Prob α) (f : α → Prob β) :
+  Prob β :=
+  ⟨fun b => ∑ a, m.measure a * (f a).measure b, by
+    classical
+    have hcomm :
+        (∑ b, ∑ a, m.measure a * (f a).measure b) =
+          ∑ a, ∑ b, m.measure a * (f a).measure b := by
+        classical
+        have h1 :
+            (∑ b, ∑ a, m.measure a * (f a).measure b) =
+              ∑ p : α × β, m.measure p.1 * (f p.1).measure p.2 := by
+          simpa using
+            (Fintype.sum_prod_type_right'
+              (f := fun a b => m.measure a * (f a).measure b)).symm
+        have h2 :
+            (∑ a, ∑ b, m.measure a * (f a).measure b) =
+              ∑ p : α × β, m.measure p.1 * (f p.1).measure p.2 := by
+          simpa using
+            (Fintype.sum_prod_type'
+              (f := fun a b => m.measure a * (f a).measure b)).symm
+        exact h1.trans h2.symm
+    calc
+      ∑ b, ∑ a, m.measure a * (f a).measure b
+          = ∑ a, ∑ b, m.measure a * (f a).measure b := hcomm
+      _ = ∑ a, m.measure a * ∑ b, (f a).measure b := by
+            refine Finset.sum_congr rfl ?_
+            intro a ha
+            simp [Finset.mul_sum]
+      _ = ∑ a, m.measure a * 1 := by
+            refine Finset.sum_congr rfl ?_
+            intro a ha
+            simp [(f a).normalized]
+      _ = ∑ a, m.measure a := by
+            simp
+      _ = 1 := m.normalized⟩
 
 -- Laws via functional extensionality
-theorem left_id {α β : Type u} [DecidableEq α] [DecidableEq β] (a : α) (f : α → Prob β) :
+theorem left_id {α β : Type u} [Fintype α] [DecidableEq α] [Fintype β] (a : α) (f : α → Prob β) :
   bind (dirac a) f = f a := by
-  -- Proof uses extensionality of measures.
-  sorry
+  classical
+  ext b
+  simp [bind, dirac]
 
 end ShallowDeep
 
