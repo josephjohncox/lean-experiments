@@ -1,4 +1,3 @@
--- Semantic interpretations for probability monads (outline; proofs omitted)
 import Mathlib.CategoryTheory.Category.Basic
 import Mathlib.CategoryTheory.Monad.Basic
 import Mathlib.Data.Real.Basic
@@ -9,19 +8,32 @@ import Mathlib.Algebra.BigOperators.Group.Finset.Sigma
 import Mathlib.Probability.ProbabilityMassFunction.Monad
 import Mathlib.Topology.Algebra.InfiniteSum.Basic
 
+/-!
+# Semantic interpretations for probability monads
+
+This file collects two lightweight approaches to giving semantics to
+probability monads: a shallow embedding and a quotient-based syntax. The
+development is intentionally schematic and focuses on core definitions.
+-/
+
 universe u v w
 
 open scoped BigOperators
 
--- Shallow embedding (function-based)
+/-!
+## Shallow embedding
+
+Distributions are functions to `ℝ` with nonnegativity proofs (normalization is
+left as a note).
+-/
 namespace ShallowEmbedding
 
--- Distributions as functions to [0,1]; discrete normalization omitted
+/-- A simple distribution as a nonnegative function `α → ℝ`. -/
 structure ProbDist (α : Type u) where
   prob : α → ℝ
   nonneg : ∀ a, 0 ≤ prob a
-  -- In discrete case, should sum to 1
 
+/-- Extensionality for `ProbDist`. -/
 @[ext] theorem ProbDist.ext {α : Type u} {p q : ProbDist α}
   (h : ∀ a, p.prob a = q.prob a) : p = q := by
   cases p with
@@ -37,12 +49,14 @@ structure ProbDist (α : Type u) where
           cases hnonneg
           rfl
 
+/-- Dirac distribution at `a`. -/
 def pure {α : Type u} [DecidableEq α] (a : α) : ProbDist α :=
   ⟨fun b => if b = a then 1 else 0, by
     classical
     intro b
     by_cases h : b = a <;> simp [h]⟩
 
+/-- Monad bind via a finite sum. -/
 noncomputable def bind {α β : Type u} [Fintype α] (m : ProbDist α) (f : α → ProbDist β) :
   ProbDist β :=
   ⟨fun b => ∑ a, m.prob a * (f a).prob b, by
@@ -52,7 +66,7 @@ noncomputable def bind {α β : Type u} [Fintype α] (m : ProbDist α) (f : α �
     intro a ha
     exact mul_nonneg (m.nonneg a) ((f a).nonneg b)⟩
 
--- Monad laws (outline)
+/-- Left identity for `bind` (outline proof for the shallow embedding). -/
 example {α β : Type u} [Fintype α] [DecidableEq α] [DecidableEq β] (a : α) (f : α → ProbDist β) :
   bind (pure a) f = f a := by
   classical
@@ -69,16 +83,20 @@ example {α β : Type u} [Fintype α] [DecidableEq α] [DecidableEq β] (a : α)
 
 end ShallowEmbedding
 
--- Quotient type (semantic equivalence)
+/-!
+## Quotient approach
+
+We quotient a syntax of finite distributions by semantic equivalence.
+-/
 namespace QuotientApproach
 
--- Syntax
+/-- Syntax for discrete probability distributions. -/
 inductive ProbDistSyntax : Type u → Type (u+1) where
   | Dirac : ∀ {α : Type u}, α → ProbDistSyntax α
   | Discrete : ∀ {α : Type u}, List (α × ℝ) → ProbDistSyntax α
   | Bind : ∀ {α β : Type u}, ProbDistSyntax α → (α → ProbDistSyntax β) → ProbDistSyntax β
 
--- Semantics
+/-- Semantics of the distribution syntax. -/
 noncomputable def eval {α : Type u} [DecidableEq α] : ProbDistSyntax α → (α → ℝ)
   | ProbDistSyntax.Dirac a => fun x => if x = a then 1 else 0
   | ProbDistSyntax.Discrete l => fun x => (l.filter (·.1 = x)).foldl (·+·.2) 0
@@ -87,16 +105,17 @@ noncomputable def eval {α : Type u} [DecidableEq α] : ProbDistSyntax α → (�
         classical
         exact ∑' a, eval (α := α) m a * eval (f a) x
 
--- Semantic equivalence
+/-- Semantic equivalence of syntactic distributions. -/
 def equiv {α : Type u} [DecidableEq α] (p q : ProbDistSyntax α) : Prop :=
   eval p = eval q
 
--- Quotient by equivalence
+/-- Quotient by semantic equivalence. -/
 def ProbDist (α : Type u) (h : DecidableEq α) := Quot (@equiv α h)
 
--- Monad on the quotient
+/-- Convenient abbreviation that fixes `DecidableEq` via classical choice. -/
 noncomputable def ProbDistM (α : Type u) := ProbDist α (Classical.decEq α)
 
+/-- Monad instance on the quotient. -/
 noncomputable instance : Monad ProbDistM where
   pure a := by
     classical
@@ -119,30 +138,36 @@ noncomputable instance : Monad ProbDistM where
 
 end QuotientApproach
 
--- Denotational semantics (interpretation into measures)
+/-!
+## Denotational semantics
+
+Interpret distributions as PMFs or probability measures and define semantic
+equality via those interpretations.
+-/
 namespace DenotationalApproach
 
--- GADT plus interpretation
+/-- A small GADT for probabilistic programs. -/
 inductive ProbDist : Type u → Type (u+1) where
   | Dirac : ∀ {α : Type u}, α → ProbDist α
   | Discrete : ∀ {α : Type u}, PMF α → ProbDist α
   | Bind : ∀ {α β : Type u}, ProbDist α → (α → ProbDist β) → ProbDist β
 
--- Interpretation into measures
+/-- Interpret the syntax into `PMF`. -/
 noncomputable def toPMF {α : Type u} : ProbDist α → PMF α
   | ProbDist.Dirac a => PMF.pure a
   | ProbDist.Discrete p => p
   | ProbDist.Bind m f => PMF.bind (toPMF m) (fun a => toPMF (f a))
 
+/-- Interpret the syntax into probability measures. -/
 noncomputable def toMeasure {α : Type u} [MeasurableSpace α] :
   ProbDist α → MeasureTheory.ProbabilityMeasure α
   | p => ⟨(toPMF p).toMeasure, by infer_instance⟩
 
--- Semantic equality (via measures)
+/-- Semantic equality via the induced probability measures. -/
 def semEq {α : Type u} [MeasurableSpace α] (p q : ProbDist α) : Prop :=
   toMeasure p = toMeasure q
 
--- Monad law (outline)
+/-- Left identity for `Bind`, stated at the level of semantic equality. -/
 theorem left_id_semantic {α β : Type u} [MeasurableSpace α] [MeasurableSpace β]
   (a : α) (f : α → ProbDist β) :
   semEq (ProbDist.Bind (ProbDist.Dirac a) f) (f a) := by
@@ -152,57 +177,66 @@ theorem left_id_semantic {α β : Type u} [MeasurableSpace α] [MeasurableSpace 
 
 end DenotationalApproach
 
--- Free monad with smart constructors
+/-!
+## Free monad approach
+
+Build a free monad from a small set of probabilistic operations.
+-/
 namespace FreeMonadApproach
 
--- Operations
+/-- Primitive probabilistic operations. -/
 inductive ProbOp : Type u → Type (u+1) where
   | Sample : ∀ {α : Type u}, List (α × ℝ) → ProbOp α
   | Uniform : ∀ {α : Type u}, List α → ProbOp α
 
--- Free structure
+/-- Free monad over `ProbOp`. -/
 inductive ProbDist : Type u → Type (u+1) where
   | Pure : ∀ {α : Type u}, α → ProbDist α
   | Op : ∀ {α : Type u}, ProbOp α → ProbDist α
   | Bind : ∀ {α β : Type u}, ProbDist α → (α → ProbDist β) → ProbDist β
 
--- Smart constructors
+/-- Smart constructor for a Dirac distribution. -/
 def dirac {α : Type u} (a : α) : ProbDist α :=
   ProbDist.Pure a
 
+/-- Smart constructor for a discrete distribution. -/
 def discrete {α : Type u} (l : List (α × ℝ)) : ProbDist α :=
   ProbDist.Op (ProbOp.Sample l)
 
+/-- Structural bind for the free monad. -/
 def bind {α β : Type u} : ProbDist α → (α → ProbDist β) → ProbDist β
   | ProbDist.Pure a, f => f a
   | ProbDist.Op op, f => ProbDist.Bind (ProbDist.Op op) f
   | ProbDist.Bind m g, f => ProbDist.Bind m (fun x => bind (g x) f)
 
--- Monad instance
+/-- Monad instance from the free `bind`. -/
 instance : Monad ProbDist where
   pure := ProbDist.Pure
   bind := bind
 
--- Laws by construction
+/-- Left identity holds definitionally for the free monad. -/
 theorem left_id {α β : Type u} (a : α) (f : α → ProbDist β) :
   bind (ProbDist.Pure a) f = f a := rfl
 
 end FreeMonadApproach
 
--- Hybrid shallow/deep embedding (outline)
+/-!
+## Hybrid shallow/deep embedding
+
+An outline of a monad interface plus one concrete carrier.
+-/
 namespace HybridApproach
 
--- Core probability monad interface
+/-- Core probability monad interface with laws. -/
 class ProbMonad (M : Type u → Type v) where
   pure : ∀ {α : Type u}, α → M α
   bind : ∀ {α β : Type u}, M α → (α → M β) → M β
-  -- Laws as part of the interface
   left_id : ∀ {α β : Type u} (a : α) (f : α → M β), bind (pure a) f = f a
   right_id : ∀ {α : Type u} (m : M α), bind m pure = m
   assoc : ∀ {α β γ : Type u} (m : M α) (f : α → M β) (g : β → M γ),
     bind (bind m f) g = bind m (fun x => bind (f x) g)
 
--- One concrete carrier
+/-- A concrete finitely supported distribution with explicit support. -/
 structure DiscreteDist (α : Type u) where
   support : Finset α
   prob : α → ℝ
@@ -210,6 +244,7 @@ structure DiscreteDist (α : Type u) where
   sums_to_one : support.sum prob = 1
   support_spec : ∀ a, a ∉ support → prob a = 0
 
+/-- Extensionality for `DiscreteDist`. -/
 @[ext] theorem DiscreteDist.ext {α : Type u} {p q : DiscreteDist α}
   (hs : p.support = q.support) (hp : ∀ a, p.prob a = q.prob a) : p = q := by
   cases p with
@@ -232,6 +267,7 @@ structure DiscreteDist (α : Type u) where
           cases hspec
           rfl
 
+/-- Dirac distribution in `DiscreteDist`. -/
 noncomputable def pureDD {α : Type u} (a : α) : DiscreteDist α := by
   classical
   refine ⟨{a}, (fun b => if b = a then 1 else 0), ?_, ?_, ?_⟩
@@ -243,6 +279,7 @@ noncomputable def pureDD {α : Type u} (a : α) : DiscreteDist α := by
       simpa using hb
     simp [hb']
 
+/-- Bind for `DiscreteDist`, defined by finite sums over supports. -/
 noncomputable def bindDD {α β : Type u} (m : DiscreteDist α) (f : α → DiscreteDist β) :
   DiscreteDist β := by
   classical
@@ -308,6 +345,7 @@ noncomputable def bindDD {α β : Type u} (m : DiscreteDist α) (f : α → Disc
       exact hb (Finset.mem_biUnion.mpr ⟨a, ha, hb'⟩)
     simp [(f a).support_spec b hb']
 
+/-- `DiscreteDist` forms a `ProbMonad`. -/
 noncomputable instance : ProbMonad (fun α => DiscreteDist α) where
   pure := pureDD
   bind := bindDD
@@ -477,7 +515,11 @@ noncomputable instance : ProbMonad (fun α => DiscreteDist α) where
         _ = (bindDD m (fun x => bindDD (f x) g)).prob c := by
               simp [bindDD]
 
--- MDPs over the abstract monad
+/-!
+### MDPs over the abstract monad
+-/
+
+/-- MDP definition specialized to an abstract probabilistic monad. -/
 structure MDP (S : Type u) (A : Type v) (M : Type u → Type w) [ProbMonad M] where
   trans : S → A → M S
   reward : S → A → S → ℝ
