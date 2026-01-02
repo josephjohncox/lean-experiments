@@ -249,13 +249,24 @@ variable {S : Type u} [Fintype S]
 noncomputable def pmf_expectation_fintype (p : PMF S) (v : S → ℝ) : ℝ :=
   ∑ s, (p s).toReal * v s
 
-/-- `tsum`-based expectation agrees with the finite sum on finite types. -/
+/-- `tsum`-based expectation agrees with the finite sum on finite types.
+
+Proof sketch:
+1. Rewrite the `tsum` as a finite sum using `tsum_fintype`.
+2. Unfold both expectation definitions and simplify.
+-/
 theorem pmf_expectation_eq_sum (p : PMF S) (v : S → ℝ) :
   pmf_expectation p v = pmf_expectation_fintype p v := by
   classical
   simp [pmf_expectation, pmf_expectation_fintype, tsum_fintype]
 
-/-- The PMF weights sum to `1` when converted to reals. -/
+/-- The PMF weights sum to `1` when converted to reals.
+
+Proof sketch:
+1. Use `PMF.tsum_coe` to express the total mass in `ENNReal`.
+2. Convert the `ENNReal` sum to a real sum via `ENNReal.toReal_sum`.
+3. Simplify with the known total mass equality.
+-/
 theorem pmf_sum_toReal_eq_one (p : PMF S) :
   (∑ s, (p s).toReal) = (1 : ℝ) := by
   classical
@@ -271,7 +282,16 @@ theorem pmf_sum_toReal_eq_one (p : PMF S) :
     _ = 1 := by
       simp [hsum]
 
-/-- Finite expectation is 1-Lipschitz in the sup norm. -/
+/-- Finite expectation is 1-Lipschitz in the sup norm.
+
+Proof sketch:
+1. Rewrite the difference of expectations as a finite sum of pointwise
+   differences.
+2. Use the triangle inequality to move the norm inside the sum.
+3. Pull the nonnegative PMF weights out of the absolute values.
+4. Bound each pointwise difference by the sup norm.
+5. Use that the PMF weights sum to `1`.
+-/
 theorem pmf_expectation_fintype_lipschitz (p : PMF S) :
   LipschitzWith 1 (fun v : S → ℝ => pmf_expectation_fintype p v) := by
   refine LipschitzWith.of_dist_le_mul ?_
@@ -320,7 +340,13 @@ noncomputable def bellman_fintype {A : Type v} (mdp : MDP S A PMF) (π : S → A
     let p := MDP.trans mdp s a
     pmf_expectation_fintype p (fun s' => MDP.reward mdp s a s' + MDP.discount mdp * v s')
 
-/-- Finite-sum Bellman operator agrees with the `tsum` version. -/
+/-- Finite-sum Bellman operator agrees with the `tsum` version.
+
+Proof sketch:
+1. Unfold both operators.
+2. Replace `pmf_expectation` with `pmf_expectation_fintype`.
+3. Finish by function extensionality.
+-/
 theorem bellman_fintype_eq {A : Type v} (mdp : MDP S A PMF) (π : S → A) (v : S → ℝ) :
   bellman_fintype mdp π v = bellman mdp π v := by
   funext s
@@ -334,7 +360,15 @@ noncomputable def bellmanIter {A : Type v} (mdp : MDP S A PMF) (π : S → A) (n
 noncomputable def policyEvalLoop {A : Type v} (mdp : MDP S A PMF) (π : S → A) (n : ℕ) (v0 : S → ℝ) : S → ℝ :=
   Nat.rec v0 (fun _ v => bellman_fintype mdp π v) n
 
-/-- The computable loop matches the iterate of the `tsum`-based Bellman operator. -/
+/-- The computable loop matches the iterate of the `tsum`-based Bellman operator.
+
+Proof sketch:
+1. Induct on `n`.
+2. The base case is definitional.
+3. The step case rewrites the finite-sum Bellman step into the `tsum`-based
+   Bellman step using `bellman_fintype_eq`.
+4. Finish by unfolding the iterate definition.
+-/
 theorem policyEvalLoop_eq_iterate {A : Type v} (mdp : MDP S A PMF) (π : S → A)
   (n : ℕ) (v0 : S → ℝ) :
   policyEvalLoop mdp π n v0 = bellmanIter mdp π n v0 := by
@@ -367,7 +401,13 @@ theorem bellman_eq_of_discount_zero {S : Type u} {A : Type v}
   funext s
   simp [bellman, hdisc, pmf_expectation]
 
-/-- Zero discount yields a contraction with constant `0`. -/
+/-- Zero discount yields a contraction with constant `0`.
+
+Proof sketch:
+1. With `discount = 0`, `bellman` ignores its value-function input.
+2. Hence the distance between any two outputs is `0`, giving a contraction
+   constant of `0`.
+-/
 theorem bellman_contracting_zero_discount {S : Type u} {A : Type v} [Fintype S]
   (mdp : MDP S A PMF) (π : S → A) (hdisc : MDP.discount mdp = 0) :
   ContractingWith 0 (bellman mdp π) := by
@@ -379,7 +419,15 @@ theorem bellman_contracting_zero_discount {S : Type u} {A : Type v} [Fintype S]
   have hw := bellman_eq_of_discount_zero (mdp := mdp) (π := π) (v := w) hdisc
   simp [hv, hw]
 
-/-- The Bellman operator is `|discount|`-Lipschitz for finite state spaces. -/
+/-- The Bellman operator is `|discount|`-Lipschitz for finite state spaces.
+
+Proof sketch:
+1. Fix a state `s` and define `f,g` for the two value functions.
+2. Use the expectation's 1-Lipschitz property to reduce to `dist f g`.
+3. Compute `f - g` as a scaled pointwise difference.
+4. Use the sup norm to bound `dist f g`.
+5. Lift the pointwise bound to the whole function space.
+-/
 theorem bellman_lipschitz_discount {S : Type u} {A : Type v} [Fintype S]
   (mdp : MDP S A PMF) (π : S → A) :
   LipschitzWith (Real.toNNReal |MDP.discount mdp|) (bellman mdp π) := by
@@ -434,7 +482,13 @@ theorem bellman_lipschitz_discount {S : Type u} {A : Type v} [Fintype S]
     simp [Real.toNNReal_of_nonneg (abs_nonneg d)]
   simpa [dist_eq_norm, hcoer] using h_norm_bound'
 
-/-- If `|discount| < 1`, the Bellman operator is a contraction. -/
+/-- If `|discount| < 1`, the Bellman operator is a contraction.
+
+Proof sketch:
+1. Apply `bellman_lipschitz_discount` to get a Lipschitz bound.
+2. Convert the strict inequality on `|discount|` to the `NNReal` form required
+   by `ContractingWith`.
+-/
 theorem bellman_contracting_discount {S : Type u} {A : Type v} [Fintype S]
   (mdp : MDP S A PMF) (π : S → A) (hdisc : |MDP.discount mdp| < 1) :
   ContractingWith (Real.toNNReal |MDP.discount mdp|) (bellman mdp π) := by
@@ -443,14 +497,23 @@ theorem bellman_contracting_discount {S : Type u} {A : Type v} [Fintype S]
     simpa [Real.toNNReal_of_nonneg (abs_nonneg _)] using hdisc
   exact (by exact_mod_cast h)
 
-/-- Value iteration via Banach's fixed point theorem. -/
+/-- Value iteration via Banach's fixed point theorem.
+
+This definition packages the fixed point guaranteed by a contraction argument.
+The proof of existence comes from `ContractingWith.efixedPoint`.
+-/
 noncomputable def valueIteration {S : Type u} {A : Type v} [Fintype S]
   (mdp : MDP S A PMF) (π : S → A) (K : NNReal)
   (hK : ContractingWith K (bellman mdp π))
   (h0 : edist (fun _ => (0 : ℝ)) (bellman mdp π (fun _ => (0 : ℝ))) ≠ ⊤) : S → ℝ :=
   ContractingWith.efixedPoint (f := bellman mdp π) hK (x := fun _ => (0 : ℝ)) h0
 
-/-- The value returned by `valueIteration` is a Bellman fixed point. -/
+/-- The value returned by `valueIteration` is a Bellman fixed point.
+
+Proof sketch:
+1. `ContractingWith.efixedPoint` returns a fixed point by construction.
+2. Unfold `valueIteration` and apply `efixedPoint_isFixedPt`.
+-/
 theorem valueIteration_isFixedPoint {S : Type u} {A : Type v} [Fintype S]
   (mdp : MDP S A PMF) (π : S → A) (K : NNReal)
   (hK : ContractingWith K (bellman mdp π))
@@ -508,7 +571,12 @@ structure PolicyKanExtension {S A : Type u} {P : Type u → Type v} [ProbContext
   policy : S → P A
   universal_property : ∀ (Q : S → P A), (∀ s, Q s = policy s) → Q = policy
 
-/-- Fixed-point existence via the contraction property. -/
+/-- Fixed-point existence via the contraction property.
+
+Proof sketch:
+1. Apply `ContractingWith.exists_fixedPoint` to `bellman`.
+2. Extract the fixed point and return it.
+-/
 theorem value_iteration_convergence {S A : Type u} [Fintype S]
   (mdp : MDP S A PMF) (π : S → A) (K : NNReal)
   (hK : ContractingWith K (MDPHylomorphism.bellman mdp π))
@@ -517,7 +585,13 @@ theorem value_iteration_convergence {S A : Type u} [Fintype S]
   rcases ContractingWith.exists_fixedPoint hK (x := fun _ => (0 : ℝ)) h0 with ⟨v, hv, -⟩
   exact ⟨v, hv⟩
 
-/-- Fixed-point existence specialized to the discount-contraction proof. -/
+/-- Fixed-point existence specialized to the discount-contraction proof.
+
+Proof sketch:
+1. Use `bellman_contracting_discount` to obtain a contraction.
+2. Provide the non-`⊤` edistance witness.
+3. Apply `value_iteration_convergence`.
+-/
 theorem value_iteration_convergence_discount {S A : Type u} [Fintype S]
   (mdp : MDP S A PMF) (π : S → A) (hdisc : |MDP.discount mdp| < 1) :
   ∃ v_star : S → ℝ, Function.IsFixedPt (MDPHylomorphism.bellman mdp π) v_star := by

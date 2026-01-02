@@ -269,13 +269,23 @@ theorem qBellman_contracting_discount (mdp : MDP S A PMF) (hdisc : |MDP.discount
 noncomputable def qIter (mdp : MDP S A PMF) (n : ℕ) (q0 : Q) : Q :=
   (qBellman mdp)^[n] q0
 
-/-- The unique fixed point produced by Banach's fixed-point theorem. -/
+/-- The unique fixed point produced by Banach's fixed-point theorem.
+
+This is the Q-iteration analogue of `valueIteration`: given a contraction
+certificate for `qBellman`, it returns the fixed point guaranteed by Banach's
+theorem.
+-/
 noncomputable def qValueIteration (mdp : MDP S A PMF) (K : NNReal)
   (hK : ContractingWith K (qBellman mdp))
   (h0 : edist (fun _ _ => (0 : ℝ)) (qBellman mdp (fun _ _ => (0 : ℝ))) ≠ ⊤) : Q :=
   ContractingWith.efixedPoint (f := qBellman mdp) hK (x := fun _ _ => (0 : ℝ)) h0
 
-/-- The fixed point returned by `qValueIteration` indeed satisfies the Bellman equation. -/
+/-- The fixed point returned by `qValueIteration` indeed satisfies the Bellman equation.
+
+Proof sketch:
+1. `ContractingWith.efixedPoint` produces a fixed point by construction.
+2. Unfold `qValueIteration` and apply `efixedPoint_isFixedPt`.
+-/
 theorem qValueIteration_isFixedPoint (mdp : MDP S A PMF) (K : NNReal)
   (hK : ContractingWith K (qBellman mdp))
   (h0 : edist (fun _ _ => (0 : ℝ)) (qBellman mdp (fun _ _ => (0 : ℝ))) ≠ ⊤) :
@@ -443,7 +453,13 @@ structure QLearningConvergenceAssumptions (mdp : MDP S A PMF) (α : ℕ → ℝ)
         Filter.Tendsto (fun n => qLearnSeq mdp α sample q0 n) atTop (nhds qStar)
 
 omit [Fintype S] in
-/-- Under the packaged assumptions, the Q-learning sequence converges. -/
+/-- Under the packaged assumptions, the Q-learning sequence converges.
+
+Proof sketch:
+1. This lemma is a projection: the convergence result is stored inside
+   `QLearningConvergenceAssumptions`.
+2. We simply return the bundled convergence witness.
+-/
 theorem qlearning_converges (mdp : MDP S A PMF) (α : ℕ → ℝ)
   (sample : ℕ → Sample S A) (q0 : Q)
   (h : QLearningConvergenceAssumptions mdp α sample q0) :
