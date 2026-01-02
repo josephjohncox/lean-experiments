@@ -17,6 +17,15 @@ The convergence theorem at the end is intentionally packaged as *assumptions*:
 it records the classical Robbins–Monro conditions and infinite visitation
 requirements but does not attempt to formalize the full stochastic
 approximation proof yet.
+
+## Terminology (quick glossary)
+
+- **Extensionality**: equality of functions is proved by pointwise equality.
+- **Q-Bellman operator**: the operator whose fixed point is the optimal Q-value.
+- **Lipschitz / contraction**: see `MDP_Basic`; these control convergence of
+  iteration.
+- **Robbins–Monro conditions**: step-size assumptions for stochastic
+  approximation (`α n > 0`, `∑ α n = ∞`, `∑ α n^2 < ∞`).
 -/
 
 open scoped BigOperators
@@ -59,6 +68,8 @@ Proof sketch:
    value in `q2`, and vice versa.
 3. Taking maxima over actions preserves these bounds, yielding
    `|qMax q1 s - qMax q2 s| ≤ r`.
+
+We also use `simp` to discharge small finite-set membership obligations.
 -/
 theorem qMax_lipschitz (q1 q2 : Q) (s : S) :
   dist (qMax q1 s) (qMax q2 s) ≤ dist q1 q2 := by
@@ -153,7 +164,14 @@ noncomputable def qBellman_fintype (mdp : MDP S A PMF) (q : Q) : Q :=
     let p := MDP.trans mdp s a
     pmf_expectation_fintype p (fun s' => MDP.reward mdp s a s' + MDP.discount mdp * qMax q s')
 
-/-- The two Bellman operators agree when `S` is finite. -/
+/-- The two Bellman operators agree when `S` is finite.
+
+Proof sketch:
+1. Unfold both definitions at each `(s,a)`.
+2. Replace the `tsum` expectation with the finite sum.
+3. Finish by **function extensionality** (`funext`), i.e. equality at every
+   `(s,a)`.
+-/
 theorem qBellman_eq_fintype (mdp : MDP S A PMF) (q : Q) :
   qBellman mdp q = qBellman_fintype mdp q := by
   funext s a
@@ -257,6 +275,9 @@ Proof sketch:
    `Real.toNNReal |discount|`.
 2. Convert `|discount| < 1` into the corresponding `NNReal` bound to satisfy
    the `ContractingWith` side condition.
+
+We use `exact_mod_cast` to move the inequality across coercions between `ℝ`
+and `NNReal`.
 -/
 theorem qBellman_contracting_discount (mdp : MDP S A PMF) (hdisc : |MDP.discount mdp| < 1) :
   ContractingWith (Real.toNNReal |MDP.discount mdp|) (qBellman mdp) := by
@@ -324,7 +345,13 @@ These lemmas are small algebraic helpers for the expectation of affine
 expressions under a finite PMF.
 -/
 
-/-- Pull a constant out of a finite expectation: `E[c + f] = c + E[f]`. -/
+/-- Pull a constant out of a finite expectation: `E[c + f] = c + E[f]`.
+
+Proof sketch:
+1. Expand the finite sum and distribute multiplication.
+2. Separate the sum into the constant part and the `f` part.
+3. Use that PMF weights sum to `1` to simplify the constant part.
+-/
 theorem pmf_expectation_fintype_add_const {S : Type u} [Fintype S]
   (p : PMF S) (c : ℝ) (f : S → ℝ) :
   pmf_expectation_fintype p (fun s => c + f s) =
@@ -342,7 +369,12 @@ theorem pmf_expectation_fintype_add_const {S : Type u} [Fintype S]
     _ = c + pmf_expectation_fintype p f := by
           simp [hsum]
 
-/-- Pull a constant out of a finite expectation: `E[c * f] = c * E[f]`. -/
+/-- Pull a constant out of a finite expectation: `E[c * f] = c * E[f]`.
+
+Proof sketch:
+1. Expand the sum and reassociate scalars.
+2. Factor the constant `c` out of the finite sum.
+-/
 theorem pmf_expectation_fintype_mul_const {S : Type u} [Fintype S]
   (p : PMF S) (c : ℝ) (f : S → ℝ) :
   pmf_expectation_fintype p (fun s => c * f s) =

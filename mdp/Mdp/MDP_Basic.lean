@@ -21,6 +21,25 @@ This file introduces a small MDP interface over probability monads, specializes
 it to `PMF`, and develops Bellman operators plus contraction/Lipschitz results
 for finite state spaces. It also includes some categorical structure and a
 lightweight hylomorphism placeholder used for later recursion schemes.
+
+## Terminology (quick glossary)
+
+- **Extensionality**: two functions are equal if they give the same output for
+  every input. Many proofs use `funext` or `[ext]` lemmas to reduce equality to
+  pointwise equality.
+- **Induction**: a proof by a base case plus a step that advances from `n` to
+  `n+1`. In Lean this often appears as `induction n with ...`.
+- **Recursor**: the primitive recursion principle (e.g., `Nat.rec`), used to
+  define or reason about functions by cases on `0` and `n+1`.
+- **Definitional vs propositional equality**: definitional equality is by
+  computation (`rfl`), while propositional equality is a proof object (`Eq`).
+- **Monad**: a type constructor with `pure` and `bind` satisfying left/right
+  identity and associativity laws.
+- **Lipschitz**: a function whose output distance is bounded by a constant times
+  the input distance.
+- **Contraction**: a Lipschitz function with constant strictly less than `1`.
+- **Fixed point**: a value `x` such that `f x = x`.
+- **Hylomorphism**: a recursion scheme (here kept as a placeholder).
 -/
 
 universe u v w
@@ -58,7 +77,11 @@ theorem map_id {P : Type u → Type v} [ProbContext P] {α : Type u} (m : P α) 
   map (fun x => x) m = m := by
   simpa [map] using (ProbContext.right_id (m := m))
 
-/-- `map` respects composition. -/
+/-- `map` respects composition.
+
+We use **function extensionality** (`funext`) to show two functions are equal
+by proving they agree on every input.
+-/
 theorem map_comp {P : Type u → Type v} [ProbContext P] {α β γ : Type u}
   (g : β → γ) (f : α → β) (m : P α) :
   map (g ∘ f) m = map g (map f m) := by
@@ -98,7 +121,11 @@ def prob_equiv {α : Type u} (p q : ProbDist α) : Prop :=
 def eval_prob {α : Type u} (p : ProbDist α) (x : α) : ENNReal :=
   p x
 
-/-- `PMF` forms a `ProbContext`. -/
+/-- `PMF` forms a `ProbContext`.
+
+We discharge the monad laws using `simp`, Lean's simplifier tactic. It rewrites
+goals using definitional equalities and tagged simplification lemmas.
+-/
 noncomputable instance : ProbContext ProbDist where
   pure := PMF.pure
   bind := PMF.bind
@@ -356,16 +383,20 @@ theorem bellman_fintype_eq {A : Type v} (mdp : MDP S A PMF) (π : S → A) (v : 
 noncomputable def bellmanIter {A : Type v} (mdp : MDP S A PMF) (π : S → A) (n : ℕ) (v0 : S → ℝ) : S → ℝ :=
   (bellman mdp π)^[n] v0
 
-/-- A computable policy evaluation loop using the finite-sum Bellman operator. -/
+/-- A computable policy evaluation loop using the finite-sum Bellman operator.
+
+This definition uses `Nat.rec`, the **recursor** for natural numbers: it defines
+the result at `0`, then specifies how to compute the result at `n+1` from `n`.
+-/
 noncomputable def policyEvalLoop {A : Type v} (mdp : MDP S A PMF) (π : S → A) (n : ℕ) (v0 : S → ℝ) : S → ℝ :=
   Nat.rec v0 (fun _ v => bellman_fintype mdp π v) n
 
 /-- The computable loop matches the iterate of the `tsum`-based Bellman operator.
 
 Proof sketch:
-1. Induct on `n`.
-2. The base case is definitional.
-3. The step case rewrites the finite-sum Bellman step into the `tsum`-based
+1. **Induction** on `n`: base case `0`, step case `n+1`.
+2. The base case is definitional (`rfl`).
+3. In the step case, rewrite the finite-sum Bellman step into the `tsum`-based
    Bellman step using `bellman_fintype_eq`.
 4. Finish by unfolding the iterate definition.
 -/
@@ -674,7 +705,12 @@ noncomputable def zeroDiscountMDP (n m : ℕ) : MDP (Fin (n + 1)) (Fin (m + 1)) 
 def zeroDiscountPolicy (n m : ℕ) : Fin (n + 1) → Fin (m + 1) :=
   fun _ => 0
 
-/-- The Bellman operator is a contraction when discount is zero. -/
+/-- The Bellman operator is a contraction when discount is zero.
+
+Proof sketch:
+1. Use `bellman_contracting_zero_discount` for the generic argument.
+2. Unfold the zero-discount MDP and simplify.
+-/
 theorem zeroDiscountMDP_contracting (n m : ℕ) :
   ContractingWith 0
     (MDPHylomorphism.bellman (zeroDiscountMDP n m) (zeroDiscountPolicy n m)) := by
@@ -744,7 +780,13 @@ end Examples
 -/
 namespace Proofs
 
-/-- Consequences of functoriality for a natural transformation `F`. -/
+/-- Consequences of functoriality for a natural transformation `F`.
+
+Proof sketch:
+1. The first clause is functoriality at the identity function.
+2. The second clause rewrites with `natural` twice and then applies
+   `ProbContext.map_comp`.
+-/
 theorem mdp_functor_laws {P Q : Type u → Type v}
   [ProbContext P] [ProbContext Q] (F : ∀ α, P α → Q α)
   (natural : ∀ α β (f : α → β) (px : P α),

@@ -14,6 +14,21 @@ import Mathlib.Topology.Algebra.InfiniteSum.Basic
 This file collects two lightweight approaches to giving semantics to
 probability monads: a shallow embedding and a quotient-based syntax. The
 development is intentionally schematic and focuses on core definitions.
+
+## Terminology (quick glossary)
+
+- **Extensionality**: equality of structured objects is reduced to pointwise
+  equality of their fields (e.g., probabilities at each outcome).
+- **Subsingleton elimination**: when a type has at most one element, all proofs
+  of that type are equal; Lean uses this to simplify proof fields.
+- **Shallow embedding**: encode distributions directly as functions.
+- **Quotient approach**: build a syntax and quotient by semantic equivalence.
+- **Quotient**: a type that identifies elements related by an equivalence;
+  here, syntactic distributions are identified if they have the same semantics.
+- **Definitional vs propositional equality**: definitional equality is by
+  computation (`rfl`), while propositional equality is a proof object (`Eq`).
+- **Denotational semantics**: interpret syntax into a semantic domain (PMFs or
+  measures) and compare results there.
 -/
 
 universe u v w
@@ -33,7 +48,16 @@ structure ProbDist (α : Type u) where
   prob : α → ℝ
   nonneg : ∀ a, 0 ≤ prob a
 
-/-- Extensionality for `ProbDist`. -/
+/-- Extensionality for `ProbDist`.
+
+This lemma is tagged with `@[ext]`, so the `ext` tactic can reduce equality
+of `ProbDist` values to equality of their fields.
+
+Proof sketch:
+1. Case split both records.
+2. Use **function extensionality** (`funext`) on the `prob` fields.
+3. Apply subsingleton elimination to the proof fields.
+-/
 @[ext] theorem ProbDist.ext {α : Type u} {p q : ProbDist α}
   (h : ∀ a, p.prob a = q.prob a) : p = q := by
   cases p with
@@ -49,14 +73,23 @@ structure ProbDist (α : Type u) where
           cases hnonneg
           rfl
 
-/-- Dirac distribution at `a`. -/
+/-- Dirac distribution at `a`.
+
+We use `by_cases` to split on whether `b = a`, and `simp` to simplify the
+resulting conditional expressions in each case.
+-/
 def pure {α : Type u} [DecidableEq α] (a : α) : ProbDist α :=
   ⟨fun b => if b = a then 1 else 0, by
     classical
     intro b
     by_cases h : b = a <;> simp [h]⟩
 
-/-- Monad bind via a finite sum. -/
+/-- Monad bind via a finite sum.
+
+Proof sketch:
+1. Define the new probability as the finite sum of products.
+2. Prove nonnegativity by pointwise nonnegativity and `sum_nonneg`.
+-/
 noncomputable def bind {α β : Type u} [Fintype α] (m : ProbDist α) (f : α → ProbDist β) :
   ProbDist β :=
   ⟨fun b => ∑ a, m.prob a * (f a).prob b, by
@@ -66,7 +99,12 @@ noncomputable def bind {α β : Type u} [Fintype α] (m : ProbDist α) (f : α �
     intro a ha
     exact mul_nonneg (m.nonneg a) ((f a).nonneg b)⟩
 
-/-- Left identity for `bind` (outline proof for the shallow embedding). -/
+/-- Left identity for `bind` (outline proof for the shallow embedding).
+
+Proof sketch:
+1. Expand `bind` on the Dirac distribution.
+2. The finite sum collapses to a single term.
+-/
 example {α β : Type u} [Fintype α] [DecidableEq α] [DecidableEq β] (a : α) (f : α → ProbDist β) :
   bind (pure a) f = f a := by
   classical
@@ -115,7 +153,16 @@ def ProbDist (α : Type u) (h : DecidableEq α) := Quot (@equiv α h)
 /-- Convenient abbreviation that fixes `DecidableEq` via classical choice. -/
 noncomputable def ProbDistM (α : Type u) := ProbDist α (Classical.decEq α)
 
-/-- Monad instance on the quotient. -/
+/-- Monad instance on the quotient.
+
+Proof sketch:
+1. `pure` is the Dirac constructor in the syntax.
+2. `bind` lifts to the quotient using `Quot.lift` (the **recursor** for
+   quotient types).
+3. Well-definedness follows from semantic equivalence and pointwise rewriting.
+
+We use `rw` to rewrite goals using previously established equalities.
+-/
 noncomputable instance : Monad ProbDistM where
   pure a := by
     classical
@@ -167,7 +214,12 @@ noncomputable def toMeasure {α : Type u} [MeasurableSpace α] :
 def semEq {α : Type u} [MeasurableSpace α] (p q : ProbDist α) : Prop :=
   toMeasure p = toMeasure q
 
-/-- Left identity for `Bind`, stated at the level of semantic equality. -/
+/-- Left identity for `Bind`, stated at the level of semantic equality.
+
+Proof sketch:
+1. Unfold the semantic interpretation to `PMF`.
+2. Reduce using the `PMF.bind_pure` law via simplification.
+-/
 theorem left_id_semantic {α β : Type u} [MeasurableSpace α] [MeasurableSpace β]
   (a : α) (f : α → ProbDist β) :
   semEq (ProbDist.Bind (ProbDist.Dirac a) f) (f a) := by
@@ -214,7 +266,12 @@ instance : Monad ProbDist where
   pure := ProbDist.Pure
   bind := bind
 
-/-- Left identity holds definitionally for the free monad. -/
+/-- Left identity holds definitionally for the free monad.
+
+Proof sketch:
+1. `bind` pattern-matches on `Pure` and returns `f a`.
+2. The result is definitional.
+-/
 theorem left_id {α β : Type u} (a : α) (f : α → ProbDist β) :
   bind (ProbDist.Pure a) f = f a := rfl
 
@@ -244,7 +301,16 @@ structure DiscreteDist (α : Type u) where
   sums_to_one : support.sum prob = 1
   support_spec : ∀ a, a ∉ support → prob a = 0
 
-/-- Extensionality for `DiscreteDist`. -/
+/-- Extensionality for `DiscreteDist`.
+
+This lemma is tagged with `@[ext]`, so the `ext` tactic can reduce equality
+of `DiscreteDist` values to equality of their fields.
+
+Proof sketch:
+1. Case split both records.
+2. Use **function extensionality** (`funext`) on probabilities.
+3. Use subsingleton elimination for proof fields.
+-/
 @[ext] theorem DiscreteDist.ext {α : Type u} {p q : DiscreteDist α}
   (hs : p.support = q.support) (hp : ∀ a, p.prob a = q.prob a) : p = q := by
   cases p with
@@ -267,7 +333,13 @@ structure DiscreteDist (α : Type u) where
           cases hspec
           rfl
 
-/-- Dirac distribution in `DiscreteDist`. -/
+/-- Dirac distribution in `DiscreteDist`.
+
+Proof sketch:
+1. Support is the singleton `{a}`.
+2. The probability is `1` at `a` and `0` elsewhere.
+3. All proof fields are discharged by case analysis and simplification.
+-/
 noncomputable def pureDD {α : Type u} (a : α) : DiscreteDist α := by
   classical
   refine ⟨{a}, (fun b => if b = a then 1 else 0), ?_, ?_, ?_⟩
@@ -279,7 +351,16 @@ noncomputable def pureDD {α : Type u} (a : α) : DiscreteDist α := by
       simpa using hb
     simp [hb']
 
-/-- Bind for `DiscreteDist`, defined by finite sums over supports. -/
+/-- Bind for `DiscreteDist`, defined by finite sums over supports.
+
+Proof sketch:
+1. The support is the union of supports of `f a` over `a` in the support of `m`.
+2. The probability at `b` is a finite sum of `m.prob a * (f a).prob b`.
+3. Nonnegativity follows from nonnegativity of each term.
+4. The total mass is `1` by rearranging finite sums and using each component's
+   `sums_to_one` proof.
+5. Points outside the support sum to `0` because each summand is zero there.
+-/
 noncomputable def bindDD {α β : Type u} (m : DiscreteDist α) (f : α → DiscreteDist β) :
   DiscreteDist β := by
   classical
@@ -345,7 +426,20 @@ noncomputable def bindDD {α β : Type u} (m : DiscreteDist α) (f : α → Disc
       exact hb (Finset.mem_biUnion.mpr ⟨a, ha, hb'⟩)
     simp [(f a).support_spec b hb']
 
-/-- `DiscreteDist` forms a `ProbMonad`. -/
+/-- `DiscreteDist` forms a `ProbMonad`.
+
+Proof sketch:
+1. `pure` is `pureDD` and `bind` is `bindDD`.
+2. Left identity: extensionality reduces to supports and probabilities; the
+   singleton support of `pureDD` collapses the sum.
+3. Right identity: if `b ∈ support` the sum collapses to `m.prob b`; otherwise
+   all summands are `0` by `support_spec`.
+4. Associativity: unfold both sides into triple finite sums and rearrange using
+   finite-sum Fubini; supports match via biUnion associativity.
+
+Note: several equalities here are **propositional** (proof objects), not
+definitional (`rfl`), because they depend on algebraic rewriting.
+-/
 noncomputable instance : ProbMonad (fun α => DiscreteDist α) where
   pure := pureDD
   bind := bindDD
