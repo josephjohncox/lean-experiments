@@ -3,6 +3,8 @@ import Mathlib.Data.Finset.BooleanAlgebra
 import Mathlib.Topology.MetricSpace.Contracting
 import Mathlib.Topology.MetricSpace.Pseudo.Pi
 import Mathlib.Analysis.Normed.Group.Constructions
+import Mathlib.MeasureTheory.Function.ConditionalExpectation.Real
+import Mathlib.Probability.Process.Filtration
 import Mathlib.Tactic
 
 /-!
@@ -29,6 +31,7 @@ approximation proof yet.
 -/
 
 open scoped BigOperators
+open scoped MeasureTheory
 open Function
 open MDPHylomorphism
 
@@ -314,6 +317,82 @@ theorem qValueIteration_isFixedPoint (mdp : MDP S A PMF) (K : NNReal)
   simpa [qValueIteration] using
     (ContractingWith.efixedPoint_isFixedPt hK (x := fun _ _ => (0 : ℝ)) h0)
 
+/-- Uniqueness/optimality: any fixed point of `qBellman` is the Banach fixed point.
+
+Proof sketch:
+1. `ContractingWith.fixedPoint_unique` states that a contraction has a unique
+   fixed point.
+2. Apply it to identify `qStar` with `qValueIteration`, the canonical fixed
+   point produced by Banach's theorem.
+
+This captures the usual "optimality" statement: the Bellman optimality
+equation has a unique solution, and Q-iteration targets it.
+-/
+theorem qValueIteration_unique (mdp : MDP S A PMF) (K : NNReal)
+  (hK : ContractingWith K (qBellman mdp))
+  (h0 : edist (fun _ _ => (0 : ℝ)) (qBellman mdp (fun _ _ => (0 : ℝ))) ≠ ⊤)
+  (qStar : Q) (hfix : Function.IsFixedPt (qBellman mdp) qStar) :
+  qStar = qValueIteration mdp K hK h0 := by
+  have hfix' :
+      Function.IsFixedPt (qBellman mdp) (qValueIteration mdp K hK h0) :=
+    qValueIteration_isFixedPoint (mdp := mdp) (K := K) (hK := hK) (h0 := h0)
+  simpa using (hK.fixedPoint_unique' hfix hfix')
+
+/-!
+### Deterministic convergence of Q-iteration
+-/
+
+/-- Geometric error bound for Q-iteration toward the fixed point.
+
+Proof sketch:
+1. Let `qStar` be the fixed point and use `IsFixedPt.iterate` to show
+   `(qBellman mdp)^[n] qStar = qStar`.
+2. Apply the Lipschitz bound for the `n`-th iterate of a contraction.
+3. Rewrite `qIter` as `iterate` and simplify.
+
+Here `Tendsto` is Lean's filter-based notion of convergence; for sequences,
+it means the usual `n → ∞` limit.
+-/
+theorem qIter_dist_qValueIteration_le (mdp : MDP S A PMF) (K : NNReal)
+  (hK : ContractingWith K (qBellman mdp))
+  (h0 : edist (fun _ _ => (0 : ℝ)) (qBellman mdp (fun _ _ => (0 : ℝ))) ≠ ⊤)
+  (q0 : Q) (n : ℕ) :
+  dist (qIter mdp n q0) (qValueIteration mdp K hK h0)
+      ≤ (K : ℝ) ^ n * dist q0 (qValueIteration mdp K hK h0) := by
+  classical
+  set qStar := qValueIteration mdp K hK h0
+  have hfix : Function.IsFixedPt (qBellman mdp) qStar :=
+    qValueIteration_isFixedPoint (mdp := mdp) (K := K) (hK := hK) (h0 := h0)
+  have hfix_iter : (qBellman mdp)^[n] qStar = qStar :=
+    (Function.IsFixedPt.iterate hfix n).eq
+  have hdist :=
+    (hK.toLipschitzWith.iterate n).dist_le_mul q0 qStar
+  simpa [qIter, qStar, hfix_iter] using hdist
+
+/-- Q-iteration converges to the fixed point.
+
+Proof sketch:
+1. Use `ContractingWith.tendsto_iterate_fixedPoint` to get convergence to the
+   canonical fixed point of the contraction.
+2. Identify that fixed point with `qValueIteration` using uniqueness.
+-/
+theorem qIter_tendsto_qValueIteration (mdp : MDP S A PMF) (K : NNReal)
+  (hK : ContractingWith K (qBellman mdp))
+  (h0 : edist (fun _ _ => (0 : ℝ)) (qBellman mdp (fun _ _ => (0 : ℝ))) ≠ ⊤)
+  (q0 : Q) :
+  Filter.Tendsto (fun n => qIter mdp n q0) Filter.atTop
+    (nhds (qValueIteration mdp K hK h0)) := by
+  classical
+  have hfix :
+      Function.IsFixedPt (qBellman mdp) (qValueIteration mdp K hK h0) :=
+    qValueIteration_isFixedPoint (mdp := mdp) (K := K) (hK := hK) (h0 := h0)
+  have hstar :
+      qValueIteration mdp K hK h0 =
+        ContractingWith.fixedPoint (f := qBellman mdp) hK := by
+    simpa using (hK.fixedPoint_unique (x := qValueIteration mdp K hK h0) hfix)
+  have ht := hK.tendsto_iterate_fixedPoint (f := qBellman mdp) (x := q0)
+  simpa [qIter, hstar] using ht
+
 /-!
 ## Stochastic Q-learning update
 
@@ -451,6 +530,182 @@ theorem qLearnStep_expectation (mdp : MDP S A PMF) (α : ℝ) (q : Q) (s : S) (a
     _ = (1 - α) * q s a + α * qBellman mdp q s a := by
           simp [qBellman, pmf_expectation_eq_sum, p]
 
+/-!
+### Stochastic Q-learning noise decomposition
+
+These lemmas rewrite the one-step update in a form suitable for stochastic
+approximation: a deterministic contraction term plus a zero-mean noise term.
+-/
+
+/-- The stochastic "noise" term: sample target minus its expectation. -/
+noncomputable def qLearnNoise (mdp : MDP S A PMF) (q : Q) (s : S) (a : A) (s' : S) : ℝ :=
+  (MDP.reward mdp s a s' + MDP.discount mdp * qMax q s') - qBellman mdp q s a
+
+omit [Fintype S] in
+/-- Q-learning update decomposes into contraction term plus noise at `(s,a)`. -/
+theorem qLearnStep_decompose (mdp : MDP S A PMF) (α : ℝ) (q : Q) (s : S) (a : A) (s' : S) :
+  (qLearnStep mdp α q s a s') s a =
+    q s a + α * (qBellman mdp q s a - q s a) + α * qLearnNoise mdp q s a s' := by
+  classical
+  simp [qLearnStep_sa, qLearnNoise, mul_add, add_assoc, add_left_comm, add_comm, sub_eq_add_neg,
+    mul_comm]
+
+/-- The noise term has zero expectation under the transition distribution. -/
+theorem qLearnNoise_expectation (mdp : MDP S A PMF) (q : Q) (s : S) (a : A) :
+  pmf_expectation (MDP.trans mdp s a) (fun s' => qLearnNoise mdp q s a s') = 0 := by
+  classical
+  set p : PMF S := MDP.trans mdp s a
+  have hsum :
+      pmf_expectation_fintype p
+        (fun s' => MDP.reward mdp s a s' + MDP.discount mdp * qMax q s') =
+      qBellman mdp q s a := by
+    simp [qBellman, pmf_expectation_eq_sum, p]
+  calc
+    pmf_expectation p (fun s' => qLearnNoise mdp q s a s')
+        = pmf_expectation_fintype p
+            (fun s' => (MDP.reward mdp s a s' + MDP.discount mdp * qMax q s') -
+              qBellman mdp q s a) := by
+            simp [qLearnNoise, pmf_expectation_eq_sum]
+    _ = pmf_expectation_fintype p
+            (fun s' => (- qBellman mdp q s a) +
+              (MDP.reward mdp s a s' + MDP.discount mdp * qMax q s')) := by
+          refine congrArg (pmf_expectation_fintype p) ?_
+          funext s'
+          ring
+    _ = (- qBellman mdp q s a) +
+          pmf_expectation_fintype p
+            (fun s' => MDP.reward mdp s a s' + MDP.discount mdp * qMax q s') := by
+          simpa using
+            (pmf_expectation_fintype_add_const p (- qBellman mdp q s a)
+              (fun s' => MDP.reward mdp s a s' + MDP.discount mdp * qMax q s'))
+    _ = (- qBellman mdp q s a) + qBellman mdp q s a := by
+          simp [hsum]
+    _ = 0 := by
+          ring
+
+/-!
+### Uniform bounds for the stochastic term
+
+The classical convergence proof needs a uniform bound on the noise. The lemmas
+below show that if rewards and Q-values are bounded, then both the Bellman
+target and the noise are bounded as well. This is the "bounded variance" input
+used by stochastic approximation arguments.
+-/
+
+omit [Fintype S] in
+/-- If `q` is uniformly bounded, then `qMax` is uniformly bounded. -/
+theorem qMax_abs_le_of_bounded (q : Q) (B : ℝ)
+  (hB : ∀ s a, |q s a| ≤ B) (s : S) :
+  |qMax q s| ≤ B := by
+  classical
+  let img : Finset ℝ := Finset.univ.image (fun a => q s a)
+  have himg : img.Nonempty := by
+    rcases (Finset.univ_nonempty : (Finset.univ : Finset A).Nonempty) with ⟨a, ha⟩
+    refine ⟨q s a, ?_⟩
+    exact Finset.mem_image.mpr ⟨a, ha, rfl⟩
+  have hle : img.max' himg ≤ B := by
+    refine (Finset.max'_le_iff (s := img) (H := himg)).2 ?_
+    intro y hy
+    rcases Finset.mem_image.mp hy with ⟨a, _ha, rfl⟩
+    exact le_trans (le_abs_self _) (hB s a)
+  have hge : -B ≤ img.max' himg := by
+    rcases (Finset.univ_nonempty : (Finset.univ : Finset A).Nonempty) with ⟨a, ha⟩
+    have hmem : q s a ∈ img := Finset.mem_image.mpr ⟨a, ha, rfl⟩
+    have hmax : q s a ≤ img.max' himg := Finset.le_max' (s := img) (x := q s a) hmem
+    have hlow : -B ≤ q s a := by
+      exact neg_le_of_abs_le (hB s a)
+    exact le_trans hlow hmax
+  have habs : |img.max' himg| ≤ B := (abs_le).2 ⟨hge, hle⟩
+  simpa [qMax, img, himg] using habs
+
+/-- Bounded rewards and bounded `q` imply a uniform bound on the Bellman target. -/
+theorem qBellman_abs_le_of_bounded (mdp : MDP S A PMF) (q : Q)
+  (B R : ℝ) (hB : ∀ s a, |q s a| ≤ B) (hBnonneg : 0 ≤ B)
+  (hR : ∀ s a s', |MDP.reward mdp s a s'| ≤ R) (hRnonneg : 0 ≤ R)
+  (s : S) (a : A) :
+  |qBellman mdp q s a| ≤ R + |MDP.discount mdp| * B := by
+  classical
+  let p : PMF S := MDP.trans mdp s a
+  let f : S → ℝ := fun s' =>
+    MDP.reward mdp s a s' + MDP.discount mdp * qMax q s'
+  have hpoint : ∀ s', |f s'| ≤ R + |MDP.discount mdp| * B := by
+    intro s'
+    have hreward := hR s a s'
+    have hqmax : |qMax q s'| ≤ B := qMax_abs_le_of_bounded (q := q) (B := B) hB s'
+    have hmul : |MDP.discount mdp * qMax q s'| ≤ |MDP.discount mdp| * B := by
+      calc
+        |MDP.discount mdp * qMax q s'| = |MDP.discount mdp| * |qMax q s'| := by
+          simp [abs_mul]
+        _ ≤ |MDP.discount mdp| * B := by
+          exact mul_le_mul_of_nonneg_left hqmax (abs_nonneg _)
+    have hsum :
+        |f s'| ≤ |MDP.reward mdp s a s'| + |MDP.discount mdp * qMax q s'| := by
+      simpa [f] using
+        (abs_add_le (MDP.reward mdp s a s') (MDP.discount mdp * qMax q s'))
+    calc
+      |f s'| ≤ |MDP.reward mdp s a s'| + |MDP.discount mdp * qMax q s'| := hsum
+      _ ≤ R + |MDP.discount mdp| * B := by
+          exact add_le_add hreward hmul
+  have hnonneg : 0 ≤ R + |MDP.discount mdp| * B := by
+    have hmul_nonneg : 0 ≤ |MDP.discount mdp| * B := mul_nonneg (abs_nonneg _) hBnonneg
+    linarith
+  have hnorm : ‖f‖ ≤ R + |MDP.discount mdp| * B := by
+    refine (pi_norm_le_iff_of_nonneg (x := f) (r := R + |MDP.discount mdp| * B) hnonneg).2 ?_
+    intro s'
+    have := hpoint s'
+    simpa [Real.norm_eq_abs] using this
+  have hLip := pmf_expectation_fintype_lipschitz (p := p)
+  have hbound : |pmf_expectation_fintype p f| ≤ ‖f‖ := by
+    simpa [pmf_expectation_fintype, dist_eq_norm, Real.norm_eq_abs] using
+      (hLip.dist_le_mul f 0)
+  have habs : |pmf_expectation_fintype p f| ≤ R + |MDP.discount mdp| * B := by
+    exact le_trans hbound hnorm
+  simpa [qBellman, pmf_expectation_eq_sum, p, f] using habs
+
+/-- With bounded rewards and `q`, the noise term is uniformly bounded. -/
+theorem qLearnNoise_abs_le_of_bounded (mdp : MDP S A PMF) (q : Q)
+  (B R : ℝ) (hB : ∀ s a, |q s a| ≤ B) (hBnonneg : 0 ≤ B)
+  (hR : ∀ s a s', |MDP.reward mdp s a s'| ≤ R) (hRnonneg : 0 ≤ R)
+  (s : S) (a : A) (s' : S) :
+  |qLearnNoise mdp q s a s'| ≤ 2 * (R + |MDP.discount mdp| * B) := by
+  have htarget :
+      |MDP.reward mdp s a s' + MDP.discount mdp * qMax q s'| ≤
+        R + |MDP.discount mdp| * B := by
+    have hreward := hR s a s'
+    have hqmax : |qMax q s'| ≤ B := qMax_abs_le_of_bounded (q := q) (B := B) hB s'
+    have hmul : |MDP.discount mdp * qMax q s'| ≤ |MDP.discount mdp| * B := by
+      calc
+        |MDP.discount mdp * qMax q s'| = |MDP.discount mdp| * |qMax q s'| := by
+          simp [abs_mul]
+        _ ≤ |MDP.discount mdp| * B := by
+          exact mul_le_mul_of_nonneg_left hqmax (abs_nonneg _)
+    have hsum :
+        |MDP.reward mdp s a s' + MDP.discount mdp * qMax q s'| ≤
+          |MDP.reward mdp s a s'| + |MDP.discount mdp * qMax q s'| := by
+      simpa using
+        (abs_add_le (MDP.reward mdp s a s') (MDP.discount mdp * qMax q s'))
+    exact le_trans hsum (add_le_add hreward hmul)
+  have hbell :
+      |qBellman mdp q s a| ≤ R + |MDP.discount mdp| * B := by
+    exact qBellman_abs_le_of_bounded (mdp := mdp) (q := q) (B := B) (R := R)
+      hB hBnonneg hR hRnonneg s a
+  have hsum :
+      |(MDP.reward mdp s a s' + MDP.discount mdp * qMax q s') -
+          qBellman mdp q s a| ≤
+        |MDP.reward mdp s a s' + MDP.discount mdp * qMax q s'| +
+          |qBellman mdp q s a| := by
+    simpa [sub_eq_add_neg] using
+      (abs_add_le (MDP.reward mdp s a s' + MDP.discount mdp * qMax q s') (- qBellman mdp q s a))
+  have hsum' :
+      |(MDP.reward mdp s a s' + MDP.discount mdp * qMax q s') -
+          qBellman mdp q s a| ≤
+        (R + |MDP.discount mdp| * B) + (R + |MDP.discount mdp| * B) := by
+    exact le_trans hsum (add_le_add htarget hbell)
+  have htwo : (R + |MDP.discount mdp| * B) + (R + |MDP.discount mdp| * B) =
+      2 * (R + |MDP.discount mdp| * B) := by
+    ring
+  simpa [qLearnNoise, htwo] using hsum'
+
 /-- Robbins–Monro step-size conditions for stochastic approximation. -/
 structure RobbinsMonro (α : ℕ → ℝ) : Prop where
   pos : ∀ n, 0 < α n
@@ -471,6 +726,20 @@ noncomputable def qLearnSeq (mdp : MDP S A PMF) (α : ℕ → ℝ)
   | n + 1 =>
       qLearnStep mdp (α n) (qLearnSeq mdp α sample q0 n)
         (sample n).s (sample n).a (sample n).s'
+
+omit [Fintype S] in
+/-- One Q-learning step at the sampled pair, written in stochastic-approximation form. -/
+theorem qLearnSeq_step_decompose (mdp : MDP S A PMF) (α : ℕ → ℝ)
+  (sample : ℕ → Sample S A) (q0 : Q) (n : ℕ) :
+  let qn := qLearnSeq mdp α sample q0 n
+  let s := (sample n).s
+  let a := (sample n).a
+  let s' := (sample n).s'
+  (qLearnSeq mdp α sample q0 (n + 1)) s a =
+    qn s a + α n * (qBellman mdp qn s a - qn s a) +
+      α n * qLearnNoise mdp qn s a s' := by
+  classical
+  simp [qLearnSeq, qLearnStep_decompose]
 
 /-- Packaged assumptions for Q-learning convergence (finite case). -/
 structure QLearningConvergenceAssumptions (mdp : MDP S A PMF) (α : ℕ → ℝ)
@@ -499,6 +768,127 @@ theorem qlearning_converges (mdp : MDP S A PMF) (α : ℕ → ℝ)
     Function.IsFixedPt (qBellman mdp) qStar ∧
       Filter.Tendsto (fun n => qLearnSeq mdp α sample q0 n) atTop (nhds qStar) :=
   h.converges
+
+/-!
+### Stochastic convergence (measure-theoretic layer)
+
+We now make the randomness explicit by introducing a probability space `Ω` and
+an adapted sample stream `sample : ℕ → Ω → Sample S A`. The key new concept is
+**conditional expectation**: `μ[f|ℱ n]` is the best `ℱ n`-measurable
+approximation of `f`. When `μ[f|ℱ n] = 0` almost surely, we say `f` has
+mean zero *given the past* — the standard **martingale-difference** property.
+
+The convergence theorem below is still packaged as an assumption, but now the
+assumptions explicitly reference the filtration and conditional expectations.
+-/
+section Stochastic
+
+variable {Ω : Type*}
+
+omit [Fintype S] in
+/-- Pathwise Q-learning sequence driven by a random sample stream. -/
+noncomputable def qLearnSeqω (mdp : MDP S A PMF) (α : ℕ → ℝ)
+  (sample : ℕ → Ω → Sample S A) (q0 : Q) : ℕ → Ω → Q
+  | 0 => fun _ => q0
+  | n + 1 => fun ω =>
+      qLearnStep mdp (α n) (qLearnSeqω mdp α sample q0 n ω)
+        (sample n ω).s (sample n ω).a (sample n ω).s'
+
+omit [Fintype S] in
+/-- The stochastic noise process along a sample stream. -/
+noncomputable def qLearnNoiseProcess (mdp : MDP S A PMF) (α : ℕ → ℝ)
+  (sample : ℕ → Ω → Sample S A) (q0 : Q) (n : ℕ) : Ω → ℝ :=
+  fun ω =>
+    qLearnNoise mdp (qLearnSeqω mdp α sample q0 n ω)
+      (sample n ω).s (sample n ω).a (sample n ω).s'
+
+omit [Fintype S] in
+/-- One stochastic update step written in stochastic-approximation form (pathwise). -/
+theorem qLearnSeqω_step_decompose (mdp : MDP S A PMF) (α : ℕ → ℝ)
+  (sample : ℕ → Ω → Sample S A) (q0 : Q) (n : ℕ) (ω : Ω) :
+  let qn := qLearnSeqω mdp α sample q0 n ω
+  let s := (sample n ω).s
+  let a := (sample n ω).a
+  let s' := (sample n ω).s'
+  (qLearnSeqω mdp α sample q0 (n + 1) ω) s a =
+    qn s a + α n * (qBellman mdp qn s a - qn s a) +
+      α n * qLearnNoise mdp qn s a s' := by
+  classical
+  simp [qLearnSeqω, qLearnStep_decompose]
+
+section Measure
+
+open MeasureTheory
+
+variable [MeasurableSpace Ω] {μ : Measure Ω} [IsProbabilityMeasure μ]
+
+local notation "mΩ" => (inferInstance : MeasurableSpace Ω)
+
+/-- A real-valued process is a martingale-difference sequence if its conditional
+expectation given the past is zero at every step. -/
+def MartingaleDifference
+  (μ : Measure Ω) (ℱ : Filtration ℕ mΩ) (ξ : ℕ → Ω → ℝ) : Prop :=
+  ∀ n, Integrable (ξ n) μ ∧ μ[ξ n|ℱ n] =ᵐ[μ] (0 : Ω → ℝ)
+
+omit [IsProbabilityMeasure μ] in
+/-- Packaging the Q-learning martingale-difference condition. -/
+theorem martingaleDifference_of_condexp
+  (ℱ : Filtration ℕ mΩ) (ξ : ℕ → Ω → ℝ)
+  (hInt : ∀ n, Integrable (ξ n) μ)
+  (hcond : ∀ n, μ[ξ n|ℱ n] =ᵐ[μ] (0 : Ω → ℝ)) :
+  MartingaleDifference μ ℱ ξ := by
+  intro n
+  exact ⟨hInt n, hcond n⟩
+
+omit [Fintype S] in
+/-- Stochastic convergence assumptions for Q-learning (finite case).
+
+These are the standard Robbins–Monro step-size conditions plus:
+* almost-sure infinite visitation of every state-action pair, and
+* a martingale-difference condition for the noise under a filtration.
+
+The conclusion is almost-sure convergence of the Q-learning sequence to the
+unique fixed point of `qBellman`.
+-/
+structure QLearningStochasticAssumptions (μ : Measure Ω)
+  (mdp : MDP S A PMF) (α : ℕ → ℝ)
+  (sample : ℕ → Ω → Sample S A) (q0 : Q)
+  (ℱ : Filtration ℕ mΩ) : Prop where
+  discount_lt_one : |MDP.discount mdp| < 1
+  bounded_reward : ∃ R, ∀ s a s', |MDP.reward mdp s a s'| ≤ R
+  bounded_q0 : ∃ B, ∀ s a, |q0 s a| ≤ B
+  robbins_monro : RobbinsMonro α
+  visits_inf : ∀ s a,
+    ∀ᵐ ω ∂ μ, Set.Infinite {n | (sample n ω).s = s ∧ (sample n ω).a = a}
+  noise_martingale :
+    MartingaleDifference μ ℱ (qLearnNoiseProcess mdp α sample q0)
+  converges_ae :
+    ∃ qStar : Q,
+      Function.IsFixedPt (qBellman mdp) qStar ∧
+        ∀ᵐ ω ∂ μ, Filter.Tendsto (fun n => qLearnSeqω mdp α sample q0 n ω)
+          atTop (nhds qStar)
+
+omit [Fintype S] [IsProbabilityMeasure μ] in
+/-- Under the stochastic assumptions, Q-learning converges almost surely.
+
+Proof sketch:
+1. This lemma is a projection: the convergence statement is bundled inside
+   `QLearningStochasticAssumptions`.
+2. We simply return the bundled almost-sure convergence witness.
+-/
+theorem qlearning_converges_ae (mdp : MDP S A PMF) (α : ℕ → ℝ)
+  (sample : ℕ → Ω → Sample S A) (q0 : Q)
+  (ℱ : Filtration ℕ mΩ)
+  (h : QLearningStochasticAssumptions μ mdp α sample q0 ℱ) :
+  ∃ qStar : Q,
+    Function.IsFixedPt (qBellman mdp) qStar ∧
+      ∀ᵐ ω ∂ μ, Filter.Tendsto (fun n => qLearnSeqω mdp α sample q0 n ω)
+        atTop (nhds qStar) :=
+  h.converges_ae
+
+end Measure
+
+end Stochastic
 
 end Finite
 
@@ -543,5 +933,72 @@ def gridQ0Rat : Fin 2 × Fin 2 → Fin 4 → Rat := fun _ _ => 0
 /-- `n` deterministic Q-iteration steps on the toy grid. -/
 def gridQIterDetRat (n : ℕ) : Fin 2 × Fin 2 → Fin 4 → Rat :=
   qIterDetRat gridStep gridRewardRat (9 / 10) n gridQ0Rat
+
+/-!
+### Runnable deterministic Q-learning example (finite grid)
+
+The definitions below give a concrete, fully computable Q-learning loop over
+`Rat` values. We keep the same `2×2` grid and rewards as in `MDP_Basic` but
+drive the update with an explicit sample stream instead of expectations.
+-/
+
+/-- A cyclic action schedule that walks through the four actions. -/
+def gridActionSeq (n : ℕ) : Fin 4 :=
+  ⟨n % 4, by
+    have h : 0 < 4 := by decide
+    exact Nat.mod_lt n h⟩
+
+/-- State sequence induced by `gridActionSeq`, starting from `(0,0)`. -/
+def gridStateSeq : ℕ → Fin 2 × Fin 2
+  | 0 => (⟨0, by decide⟩, ⟨0, by decide⟩)
+  | n + 1 =>
+      let s := gridStateSeq n
+      let a := gridActionSeq n
+      _root_.Examples.gridStep s a
+
+/-- A deterministic sample stream `(s, a, s')` for the grid. -/
+def gridSampleStream (n : ℕ) : Sample (Fin 2 × Fin 2) (Fin 4) :=
+  let s := gridStateSeq n
+  let a := gridActionSeq n
+  { s := s, a := a, s' := _root_.Examples.gridStep s a }
+
+/-- One-step deterministic Q-learning update over `Rat` values. -/
+def qLearnStepDetRat {S A : Type u} [Fintype A] [DecidableEq S] [DecidableEq A] [Nonempty A]
+  (reward : S → A → S → Rat) (discount : Rat) (α : Rat)
+  (q : S → A → Rat) (s : S) (a : A) (s' : S) : S → A → Rat :=
+  fun s0 a0 =>
+    if _ : s0 = s ∧ a0 = a then
+      (1 - α) * q s a + α * (reward s a s' + discount * qMaxDetRat q s')
+    else
+      q s0 a0
+
+/-- Iterated deterministic Q-learning sequence over `Rat`. -/
+def qLearnSeqDetRat {S A : Type u} [Fintype A] [DecidableEq S] [DecidableEq A] [Nonempty A]
+  (reward : S → A → S → Rat) (discount : Rat) (α : ℕ → Rat)
+  (sample : ℕ → Sample S A) (q0 : S → A → Rat) : ℕ → S → A → Rat
+  | 0 => q0
+  | n + 1 =>
+      qLearnStepDetRat reward discount (α n)
+        (qLearnSeqDetRat reward discount α sample q0 n)
+        (sample n).s (sample n).a (sample n).s'
+
+/-- A decreasing step size for the demo: `α n = 1 / (n+1)`. -/
+def gridAlphaRat (n : ℕ) : Rat := (1 : Rat) / (n + 1)
+
+/-- Q-learning on the grid using the deterministic sample stream. -/
+def gridQLearnDetRat (n : ℕ) : Fin 2 × Fin 2 → Fin 4 → Rat :=
+  qLearnSeqDetRat _root_.Examples.gridRewardRat (9 / 10) gridAlphaRat gridSampleStream gridQ0Rat n
+
+/-- Example state `(0,0)` used for small evaluations. -/
+def gridS00 : Fin 2 × Fin 2 := (⟨0, by decide⟩, ⟨0, by decide⟩)
+
+/-- The "right" action used for small evaluations. -/
+def gridActionRight : Fin 4 := 0
+
+/-- Value of the `(0,0,right)` entry after three Q-learning steps. -/
+def gridQAfter3 : Rat := (gridQLearnDetRat 3) gridS00 gridActionRight
+
+/-- Value of the `(0,0,right)` entry after five Q-learning steps. -/
+def gridQAfter5 : Rat := (gridQLearnDetRat 5) gridS00 gridActionRight
 
 end Examples

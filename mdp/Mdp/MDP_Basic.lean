@@ -553,6 +553,59 @@ theorem valueIteration_isFixedPoint {S : Type u} {A : Type v} [Fintype S]
   simpa [valueIteration] using
     (ContractingWith.efixedPoint_isFixedPt hK (x := fun _ => (0 : ℝ)) h0)
 
+/-!
+### Deterministic convergence of value iteration
+-/
+
+/-- Geometric error bound for value iteration.
+
+Proof sketch:
+1. Let `vStar` be the fixed point and use `IsFixedPt.iterate` to show
+   `(bellman mdp π)^[n] vStar = vStar`.
+2. Apply the Lipschitz bound for the `n`-th iterate of a contraction.
+3. Rewrite `bellmanIter` as `iterate` and simplify.
+-/
+theorem bellmanIter_dist_valueIteration_le {S : Type u} {A : Type v} [Fintype S]
+  (mdp : MDP S A PMF) (π : S → A) (K : NNReal)
+  (hK : ContractingWith K (bellman mdp π))
+  (h0 : edist (fun _ => (0 : ℝ)) (bellman mdp π (fun _ => (0 : ℝ))) ≠ ⊤)
+  (v0 : S → ℝ) (n : ℕ) :
+  dist (bellmanIter mdp π n v0) (valueIteration mdp π K hK h0)
+      ≤ (K : ℝ) ^ n * dist v0 (valueIteration mdp π K hK h0) := by
+  classical
+  set vStar := valueIteration mdp π K hK h0
+  have hfix : Function.IsFixedPt (bellman mdp π) vStar :=
+    valueIteration_isFixedPoint (mdp := mdp) (π := π) (K := K) (hK := hK) (h0 := h0)
+  have hfix_iter : (bellman mdp π)^[n] vStar = vStar :=
+    (Function.IsFixedPt.iterate hfix n).eq
+  have hdist := (hK.toLipschitzWith.iterate n).dist_le_mul v0 vStar
+  simpa [bellmanIter, vStar, hfix_iter] using hdist
+
+/-- Value iteration converges to the fixed point.
+
+Proof sketch:
+1. Use `ContractingWith.tendsto_iterate_fixedPoint` to get convergence to the
+   canonical fixed point of the contraction.
+2. Identify that fixed point with `valueIteration` using uniqueness.
+-/
+theorem bellmanIter_tendsto_valueIteration {S : Type u} {A : Type v} [Fintype S]
+  (mdp : MDP S A PMF) (π : S → A) (K : NNReal)
+  (hK : ContractingWith K (bellman mdp π))
+  (h0 : edist (fun _ => (0 : ℝ)) (bellman mdp π (fun _ => (0 : ℝ))) ≠ ⊤)
+  (v0 : S → ℝ) :
+  Filter.Tendsto (fun n => bellmanIter mdp π n v0) Filter.atTop
+    (nhds (valueIteration mdp π K hK h0)) := by
+  classical
+  have hfix :
+      Function.IsFixedPt (bellman mdp π) (valueIteration mdp π K hK h0) :=
+    valueIteration_isFixedPoint (mdp := mdp) (π := π) (K := K) (hK := hK) (h0 := h0)
+  have hstar :
+      valueIteration mdp π K hK h0 =
+        ContractingWith.fixedPoint (f := bellman mdp π) hK := by
+    simpa using (hK.fixedPoint_unique (x := valueIteration mdp π K hK h0) hfix)
+  have ht := hK.tendsto_iterate_fixedPoint (f := bellman mdp π) (x := v0)
+  simpa [bellmanIter, hstar] using ht
+
 end MDPHylomorphism
 
 /-!
