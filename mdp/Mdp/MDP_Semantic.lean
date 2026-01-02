@@ -1,34 +1,72 @@
--- Semantic interpretations for probability monads (sketches)
+-- Semantic interpretations for probability monads (outline; proofs omitted)
 import Mathlib.CategoryTheory.Category.Basic
 import Mathlib.CategoryTheory.Monad.Basic
+import Mathlib.Data.Real.Basic
+import Mathlib.MeasureTheory.Measure.ProbabilityMeasure
 import Mathlib.MeasureTheory.Measure.MeasureSpace
 import Mathlib.Data.Finset.Basic
 
 universe u v w
 
--- Approach 1: Shallow embedding (function-based)
+open scoped BigOperators
+
+-- Shallow embedding (function-based)
 namespace ShallowEmbedding
 
--- Distributions as functions to [0,1] (informal)
+-- Distributions as functions to [0,1]; discrete normalization omitted
 structure ProbDist (α : Type u) where
   prob : α → ℝ
   nonneg : ∀ a, 0 ≤ prob a
   -- In discrete case, should sum to 1
 
-instance {α : Type u} [DecidableEq α] : Monad ProbDist where
-  pure a := ⟨fun b => if b = a then 1 else 0, by simp [if_pos, if_neg, le_refl]⟩
-  bind m f := ⟨fun b => sorry, -- Would be ∫ₐ m.prob a * (f a).prob b
-                sorry⟩
+@[ext] theorem ProbDist.ext {α : Type u} {p q : ProbDist α}
+  (h : ∀ a, p.prob a = q.prob a) : p = q := by
+  cases p with
+  | mk pprob pnonneg =>
+      cases q with
+      | mk qprob qnonneg =>
+          have hprob : pprob = qprob := by
+            funext a
+            exact h a
+          cases hprob
+          have hnonneg : pnonneg = qnonneg := by
+            apply Subsingleton.elim
+          cases hnonneg
+          rfl
 
--- Monad laws: proof sketch
-example {α β : Type u} [DecidableEq α] [DecidableEq β] (a : α) (f : α → ProbDist β) :
-  (pure a >>= f) = f a := by
-  -- Uses functional extensionality
-  sorry
+def pure {α : Type u} [DecidableEq α] (a : α) : ProbDist α :=
+  ⟨fun b => if b = a then 1 else 0, by
+    classical
+    intro b
+    by_cases h : b = a <;> simp [h]⟩
+
+noncomputable def bind {α β : Type u} [Fintype α] (m : ProbDist α) (f : α → ProbDist β) :
+  ProbDist β :=
+  ⟨fun b => ∑ a, m.prob a * (f a).prob b, by
+    intro b
+    classical
+    refine Finset.sum_nonneg ?_
+    intro a ha
+    exact mul_nonneg (m.nonneg a) ((f a).nonneg b)⟩
+
+-- Monad laws (outline)
+example {α β : Type u} [Fintype α] [DecidableEq α] [DecidableEq β] (a : α) (f : α → ProbDist β) :
+  bind (pure a) f = f a := by
+  classical
+  ext b
+  calc
+    (∑ a', (if a' = a then 1 else 0) * (f a').prob b)
+        = ∑ a', (if a' = a then (f a').prob b else 0) := by
+            classical
+            refine Finset.sum_congr rfl ?_
+            intro a' ha'
+            by_cases h : a' = a <;> simp [h]
+    _ = (f a).prob b := by
+            simp
 
 end ShallowEmbedding
 
--- Approach 2: Quotient type (semantic equivalence)
+-- Quotient type (semantic equivalence)
 namespace QuotientApproach
 
 -- Syntax
@@ -48,18 +86,20 @@ def equiv {α : Type u} [DecidableEq α] (p q : ProbDistSyntax α) : Prop :=
   eval p = eval q
 
 -- Quotient by equivalence
-def ProbDist (α : Type u) [DecidableEq α] := Quot (@equiv α _)
+def ProbDist (α : Type u) (h : DecidableEq α) := Quot (@equiv α h)
 
 -- Monad on the quotient
-def ProbDistM := fun (α : Type u) => Σ (h : DecidableEq α), ProbDist α h
+noncomputable def ProbDistM (α : Type u) := ProbDist α (Classical.decEq α)
 
 instance : Monad ProbDistM where
-  pure a := ⟨inferInstance, Quot.mk _ (ProbDistSyntax.Dirac a)⟩
+  pure a := by
+    classical
+    exact Quot.mk _ (ProbDistSyntax.Dirac a)
   bind := sorry -- Lift bind through quotient
 
 end QuotientApproach
 
--- Approach 3: Denotational semantics (interpretation into measures)
+-- Denotational semantics (interpretation into measures)
 namespace DenotationalApproach
 
 -- GADT plus interpretation
@@ -79,7 +119,7 @@ noncomputable def toMeasure {α : Type u} [MeasurableSpace α] :
 def semEq {α : Type u} [MeasurableSpace α] (p q : ProbDist α) : Prop :=
   toMeasure p = toMeasure q
 
--- Monad law sketch (semantic)
+-- Monad law (outline)
 theorem left_id_semantic {α β : Type u} [MeasurableSpace α] [MeasurableSpace β]
   (a : α) (f : α → ProbDist β) :
   semEq (ProbDist.Bind (ProbDist.Dirac a) f) (f a) := by
@@ -89,7 +129,7 @@ theorem left_id_semantic {α β : Type u} [MeasurableSpace α] [MeasurableSpace 
 
 end DenotationalApproach
 
--- Approach 4: Free monad with smart constructors
+-- Free monad with smart constructors
 namespace FreeMonadApproach
 
 -- Operations
@@ -110,18 +150,23 @@ def dirac {α : Type u} (a : α) : ProbDist α :=
 def discrete {α : Type u} (l : List (α × ℝ)) : ProbDist α :=
   ProbDist.Op (ProbOp.Sample l)
 
+def bind {α β : Type u} : ProbDist α → (α → ProbDist β) → ProbDist β
+  | ProbDist.Pure a, f => f a
+  | ProbDist.Op op, f => ProbDist.Bind (ProbDist.Op op) f
+  | ProbDist.Bind m g, f => ProbDist.Bind m (fun x => bind (g x) f)
+
 -- Monad instance
 instance : Monad ProbDist where
   pure := ProbDist.Pure
-  bind := ProbDist.Bind
+  bind := bind
 
 -- Laws by construction
 theorem left_id {α β : Type u} (a : α) (f : α → ProbDist β) :
-  (pure a >>= f) = f a := rfl
+  bind (ProbDist.Pure a) f = f a := rfl
 
 end FreeMonadApproach
 
--- Hybrid shallow/deep embedding (sketch)
+-- Hybrid shallow/deep embedding (outline)
 namespace HybridApproach
 
 -- Core probability monad interface
@@ -141,12 +186,17 @@ structure DiscreteDist (α : Type u) where
   nonneg : ∀ a, 0 ≤ prob a
   sums_to_one : support.sum prob = 1
 
-instance [DecidableEq α] : ProbMonad (fun α => DiscreteDist α) where
-  pure a := ⟨{a}, fun b => if b = a then 1 else 0, by simp [if_pos, if_neg, le_refl], by simp⟩
+noncomputable instance : ProbMonad (fun α => DiscreteDist α) where
+  pure {α} a := by
+    classical
+    refine ⟨{a}, (fun b => if b = a then 1 else 0), ?_, ?_⟩
+    · intro b
+      by_cases h : b = a <;> simp [h, zero_le_one]
+    · simp
   bind m f := sorry -- Implementation omitted
-  left_id := by intros; ext; simp -- Proof sketch
-  right_id := by intros; ext; simp
-  assoc := by intros; ext; simp
+  left_id := by intros; sorry
+  right_id := by intros; sorry
+  assoc := by intros; sorry
 
 -- MDPs over the abstract monad
 structure MDP (S : Type u) (A : Type v) (M : Type u → Type w) [ProbMonad M] where

@@ -7,18 +7,21 @@ import Mathlib.Probability.ProbabilityMassFunction.Basic
 import Mathlib.Probability.ProbabilityMassFunction.Constructions
 import Mathlib.Probability.ProbabilityMassFunction.Monad
 import Mathlib.Topology.MetricSpace.Contracting
-import Mathlib.Topology.Algebra.InfiniteSum
+import Mathlib.Topology.EMetricSpace.Pi
+import Mathlib.Topology.Algebra.InfiniteSum.Basic
 import Mathlib.Analysis.Normed.Group.Constructions
 import Mathlib.Data.ENNReal.BigOperators
 import Mathlib.Algebra.BigOperators.Group.Finset.Piecewise
 import Mathlib.MeasureTheory.Measure.MeasureSpace
 import Mathlib.Tactic
+import Mathlib.Data.Rat.Defs
 
 universe u v w
 
 set_option diagnostics true
 
 open scoped BigOperators
+open Function
 
 -- Probability context (monad-like interface)
 class ProbContext (P : Type u → Type v) where
@@ -69,21 +72,21 @@ def prob_equiv {α : Type u} (p q : ProbDist α) : Prop :=
   p = q
 
 -- Point mass evaluation
-def eval_prob {α : Type u} (p : ProbDist α) (x : α) : ℝ≥0∞ :=
+def eval_prob {α : Type u} (p : ProbDist α) (x : α) : ENNReal :=
   p x
 
-instance : ProbContext ProbDist where
+noncomputable instance : ProbContext ProbDist where
   pure := PMF.pure
   bind := PMF.bind
   left_id := by
     intros α β a f
-    simpa using (PMF.pure_bind (a := a) (f := f))
+    simp
   right_id := by
     intros α m
-    simpa using (PMF.bind_pure (p := m))
+    simp
   assoc := by
     intros α β γ m f g
-    simpa using (PMF.bind_bind (p := m) (f := f) (g := g))
+    simp
 
 -- MDP datatype: simple, POMDP, hierarchical
 inductive MDP (S : Type u) (A : Type v) (P : Type u → Type w) [ProbContext P] : Type (max u v w + 1) where
@@ -101,7 +104,7 @@ inductive MDP (S : Type u) (A : Type v) (P : Type u → Type w) [ProbContext P] 
   | HierarchicalMDP : ∀ (SubMDP : Type (max u v w)),
     (high_level : MDP S A P) →
     (decompose : S → A → SubMDP) →
-    (compose : SubMDP → S → P A) →
+    (compose : SubMDP → S → P S) →
     MDP S A P
 
 namespace MDP
@@ -143,7 +146,9 @@ instance MDPCat (P : Type u → Type v) [ProbContext P] : CategoryTheory.Categor
   id X := ⟨id, id, by
     intro s a
     simpa using (ProbContext.map_id (m := MDP.trans X.2.2 s a))⟩
-  comp f g := ⟨g.state_map ∘ f.state_map, g.action_map ∘ f.action_map, by
+  comp := by
+    intro X Y Z f g
+    refine ⟨g.state_map ∘ f.state_map, g.action_map ∘ f.action_map, ?_⟩
     intro s a
     have hf := f.preserves_dynamics s a
     have hg := g.preserves_dynamics (f.state_map s) (f.action_map a)
@@ -154,9 +159,9 @@ instance MDPCat (P : Type u → Type v) [ProbContext P] : CategoryTheory.Categor
                 (ProbContext.map_comp (g := g.state_map) (f := f.state_map)
                   (m := MDP.trans X.2.2 s a))
       _ = ProbContext.map g.state_map (MDP.trans Y.2.2 (f.state_map s) (f.action_map a)) := by
-            simpa [hf]
+            simp [hf]
       _ = MDP.trans Z.2.2 (g.state_map (f.state_map s)) (g.action_map (f.action_map a)) := by
-            simpa using hg⟩
+            simpa using hg
 
 end MDPCategory
 
@@ -171,11 +176,11 @@ inductive StateValueF (S A : Type u) (P : Type u → Type v) [ProbContext P] (X 
 def Algebra (F : Type u → Type v) (A : Type u) := F A → A
 def Coalgebra (F : Type u → Type v) (A : Type u) := A → F A
 
--- Mendler-style hylomorphism (TODO: well-founded implementation)
+-- Mendler-style hylomorphism (placeholder; intended for well-founded recursion)
 def mendlerHylo {F : Type u → Type u} {A B : Type u} [Inhabited B]
-  (alg : ∀ X, (X → B) → F X → B)
-  (coalg : A → F A) : A → B :=
-  fun _ => default -- TODO: implement via well-founded recursion
+  (_alg : ∀ X, (X → B) → F X → B)
+  (_coalg : A → F A) : A → B :=
+  fun _ => default -- placeholder
 
 -- Expected value for PMFs
 noncomputable def pmf_expectation {S : Type u} (p : PMF S) (v : S → ℝ) : ℝ :=
@@ -197,15 +202,15 @@ noncomputable def pmf_expectation_fintype (p : PMF S) (v : S → ℝ) : ℝ :=
 
 theorem pmf_expectation_eq_sum (p : PMF S) (v : S → ℝ) :
   pmf_expectation p v = pmf_expectation_fintype p v := by
-  simpa [pmf_expectation, pmf_expectation_fintype] using
-    (tsum_fintype (f := fun s => (p s).toReal * v s))
+  classical
+  simp [pmf_expectation, pmf_expectation_fintype, tsum_fintype]
 
 theorem pmf_sum_toReal_eq_one (p : PMF S) :
   (∑ s, (p s).toReal) = (1 : ℝ) := by
   classical
-  have hsum : (∑ s, p s) = (1 : ℝ≥0∞) := by
+  have hsum : (∑ s, p s) = (1 : ENNReal) := by
     simpa [tsum_fintype] using (PMF.tsum_coe (p := p))
-  have hne : ∀ s ∈ (Finset.univ : Finset S), p s ≠ ∞ := by
+  have hne : ∀ s ∈ (Finset.univ : Finset S), p s ≠ ⊤ := by
     intro s hs
     simpa using (PMF.apply_ne_top (p := p) s)
   calc
@@ -213,7 +218,7 @@ theorem pmf_sum_toReal_eq_one (p : PMF S) :
       symm
       simpa using (ENNReal.toReal_sum (s := (Finset.univ : Finset S)) (f := fun s => p s) hne)
     _ = 1 := by
-      simpa [hsum]
+      simp [hsum]
 
 theorem pmf_expectation_fintype_lipschitz (p : PMF S) :
   LipschitzWith 1 (fun v : S → ℝ => pmf_expectation_fintype p v) := by
@@ -252,6 +257,8 @@ theorem pmf_expectation_fintype_lipschitz (p : PMF S) :
           simp [Finset.sum_mul]
     _ = ‖v - w‖ := by
           simp [hsum]
+    _ = (1 : ℝ) * dist v w := by
+          simp [dist_eq_norm]
 
 noncomputable def bellman_fintype {A : Type v} (mdp : MDP S A PMF) (π : S → A) (v : S → ℝ) :
   S → ℝ :=
@@ -265,7 +272,10 @@ theorem bellman_fintype_eq {A : Type v} (mdp : MDP S A PMF) (π : S → A) (v : 
   funext s
   simp [bellman_fintype, bellman, pmf_expectation_eq_sum]
 
-def policyEvalLoop {A : Type v} (mdp : MDP S A PMF) (π : S → A) (n : ℕ) (v0 : S → ℝ) : S → ℝ :=
+noncomputable def bellmanIter {A : Type v} (mdp : MDP S A PMF) (π : S → A) (n : ℕ) (v0 : S → ℝ) : S → ℝ :=
+  (bellman mdp π)^[n] v0
+
+noncomputable def policyEvalLoop {A : Type v} (mdp : MDP S A PMF) (π : S → A) (n : ℕ) (v0 : S → ℝ) : S → ℝ :=
   Nat.rec v0 (fun _ v => bellman_fintype mdp π v) n
 
 theorem policyEvalLoop_eq_iterate {A : Type v} (mdp : MDP S A PMF) (π : S → A)
@@ -274,23 +284,31 @@ theorem policyEvalLoop_eq_iterate {A : Type v} (mdp : MDP S A PMF) (π : S → A
   induction n with
   | zero => rfl
   | succ n ih =>
-      simp [policyEvalLoop, bellmanIter, Function.iterate_succ, ih, bellman_fintype_eq]
-
-def bellmanIter {A : Type v} (mdp : MDP S A PMF) (π : S → A) (n : ℕ) (v0 : S → ℝ) : S → ℝ :=
-  (bellman mdp π)^[n] v0
+      calc
+        policyEvalLoop mdp π (Nat.succ n) v0
+            = bellman_fintype mdp π (policyEvalLoop mdp π n v0) := by
+                rfl
+        _ = bellman mdp π (policyEvalLoop mdp π n v0) := by
+              simpa using
+                (bellman_fintype_eq (mdp := mdp) (π := π) (v := policyEvalLoop mdp π n v0))
+        _ = bellman mdp π (bellmanIter mdp π n v0) := by
+              simpa [ih]
+        _ = bellmanIter mdp π (Nat.succ n) v0 := by
+              simpa [bellmanIter] using
+                (Function.iterate_succ_apply' (f := bellman mdp π) (n := n) (x := v0)).symm
 
 end Finite
 
 theorem bellman_eq_of_discount_zero {S : Type u} {A : Type v}
   (mdp : MDP S A PMF) (π : S → A) (v : S → ℝ) (hdisc : MDP.discount mdp = 0) :
-  bellman mdp π v = bellman mdp π (fun _ => 0) := by
+  bellman mdp π v = bellman mdp π (fun _ => (0 : ℝ)) := by
   funext s
   simp [bellman, hdisc, pmf_expectation]
 
 theorem bellman_contracting_zero_discount {S : Type u} {A : Type v} [Fintype S]
   (mdp : MDP S A PMF) (π : S → A) (hdisc : MDP.discount mdp = 0) :
   ContractingWith 0 (bellman mdp π) := by
-  refine ⟨by simpa using (show (0 : ℝ≥0) < 1 from zero_lt_one), ?_⟩
+  refine ⟨by simpa using (show (0 : NNReal) < 1 from zero_lt_one), ?_⟩
   refine LipschitzWith.of_dist_le_mul ?_
   intro v w
   have hv := bellman_eq_of_discount_zero (mdp := mdp) (π := π) (v := v) hdisc
@@ -317,9 +335,13 @@ theorem bellman_lipschitz_discount {S : Type u} {A : Type v} [Fintype S]
       simpa using (hLip.dist_le_mul f g)
     have hfg : f - g = d • (v - w) := by
       funext s'
-      ring
+      have :
+          MDP.reward mdp s a s' + d * v s' - (MDP.reward mdp s a s' + d * w s') =
+            d * (v s' - w s') := by
+              ring
+      simpa [f, g, smul_eq_mul] using this
     have hdist_fg : dist f g = |d| * dist v w := by
-      simp [dist_eq_norm, hfg, norm_smul, Real.norm_eq_abs, abs_mul]
+      simp [dist_eq_norm, hfg, norm_smul, Real.norm_eq_abs]
     have hbv : bellman mdp π v s = pmf_expectation_fintype p f := by
       simp [bellman, pmf_expectation_eq_sum, p, a, f, d]
     have hbw : bellman mdp π w s = pmf_expectation_fintype p g := by
@@ -331,15 +353,20 @@ theorem bellman_lipschitz_discount {S : Type u} {A : Type v} [Fintype S]
       _ ≤ dist f g := hE
       _ = |d| * dist v w := hdist_fg
   have hnonneg : 0 ≤ |d| * dist v w := by
-    nlinarith [abs_nonneg d, dist_nonneg]
+    have hnorm : 0 ≤ ‖v - w‖ := norm_nonneg _
+    simpa [dist_eq_norm] using mul_nonneg (abs_nonneg d) hnorm
   have hnorm :
-      ‖bellman mdp π v - bellman mdp π w‖ ≤ |d| * dist v w := by
-    refine (pi_norm_le_iff_of_nonneg' (r := |d| * dist v w) hnonneg).2 ?_
+      ‖(fun s => bellman mdp π v s - bellman mdp π w s)‖ ≤ |d| * dist v w := by
+    refine (pi_norm_le_iff_of_nonneg
+      (x := fun s => bellman mdp π v s - bellman mdp π w s)
+      (r := |d| * dist v w) hnonneg).2 ?_
     intro s
     simpa [dist_eq_norm] using hpoint s
+  have hnorm' : ‖bellman mdp π v - bellman mdp π w‖ ≤ |d| * dist v w := by
+    simpa using hnorm
   have hcoer : (Real.toNNReal |d| : ℝ) = |d| := by
     simp [Real.toNNReal_of_nonneg (abs_nonneg d)]
-  simpa [dist_eq_norm, hcoer] using hnorm
+  simpa [dist_eq_norm, hcoer] using hnorm'
 
 theorem bellman_contracting_discount {S : Type u} {A : Type v} [Fintype S]
   (mdp : MDP S A PMF) (π : S → A) (hdisc : |MDP.discount mdp| < 1) :
@@ -350,25 +377,26 @@ theorem bellman_contracting_discount {S : Type u} {A : Type v} [Fintype S]
   exact (by exact_mod_cast h)
 
 -- Value iteration via contraction/fixed point (policy evaluation)
-noncomputable def valueIteration {S : Type u} {A : Type v}
-  (mdp : MDP S A PMF) (π : S → A) (K : ℝ≥0)
+noncomputable def valueIteration {S : Type u} {A : Type v} [Fintype S]
+  (mdp : MDP S A PMF) (π : S → A) (K : NNReal)
   (hK : ContractingWith K (bellman mdp π))
-  (h0 : edist (fun _ => (0 : ℝ)) (bellman mdp π (fun _ => 0)) ≠ ∞) : S → ℝ :=
-  ContractingWith.efixedPoint hK (x := fun _ => 0) h0
+  (h0 : edist (fun _ => (0 : ℝ)) (bellman mdp π (fun _ => (0 : ℝ))) ≠ ⊤) : S → ℝ :=
+  ContractingWith.efixedPoint (f := bellman mdp π) hK (x := fun _ => (0 : ℝ)) h0
 
-theorem valueIteration_isFixedPoint {S : Type u} {A : Type v}
-  (mdp : MDP S A PMF) (π : S → A) (K : ℝ≥0)
+theorem valueIteration_isFixedPoint {S : Type u} {A : Type v} [Fintype S]
+  (mdp : MDP S A PMF) (π : S → A) (K : NNReal)
   (hK : ContractingWith K (bellman mdp π))
-  (h0 : edist (fun _ => (0 : ℝ)) (bellman mdp π (fun _ => 0)) ≠ ∞) :
-  IsFixedPt (bellman mdp π) (valueIteration mdp π K hK h0) := by
-  simpa using (ContractingWith.efixedPoint_isFixedPt hK (x := fun _ => 0) h0)
+  (h0 : edist (fun _ => (0 : ℝ)) (bellman mdp π (fun _ => (0 : ℝ))) ≠ ⊤) :
+  Function.IsFixedPt (bellman mdp π) (valueIteration mdp π K hK h0) := by
+  simpa [valueIteration] using
+    (ContractingWith.efixedPoint_isFixedPt hK (x := fun _ => (0 : ℝ)) h0)
 
 end MDPHylomorphism
 
 -- Multiple interpretations as a higher-kinded type
 inductive MDPInterpretation : Type u → Type (u+1) where
   | Simulation : ∀ {S A : Type u} {P : Type u → Type u} [ProbContext P],
-    MDP S A P → S → List A → List S → MDPInterpretation Unit
+    MDP S A P → S → List A → List S → MDPInterpretation PUnit
   | RLAgent : ∀ {S A : Type u} {P : Type u → Type u} [ProbContext P],
     MDP S A P → (S → A) → MDPInterpretation (S → A)
   | ActiveControl : ∀ {S A : Type u} {P : Type u → Type u} [ProbContext P],
@@ -376,7 +404,7 @@ inductive MDPInterpretation : Type u → Type (u+1) where
   | Computation : ∀ {S A R : Type u} {P : Type u → Type u} [ProbContext P],
     MDP S A P → (S → R) → MDPInterpretation R
 
--- Sketches for higher-categorical variants
+-- Notes for higher-categorical variants
 namespace InfinityMDP
 
 -- Simplicial approach to ∞-MDPs
@@ -390,8 +418,7 @@ structure SimplexMDP (n : ℕ) where
 inductive NCatMDP : ℕ → Type u → Type u → (Type u → Type v) → Type (max u v + 1)
   | Zero : ∀ {S A : Type u} {P : Type u → Type v} [ProbContext P], MDP S A P → NCatMDP 0 S A P
   | Succ : ∀ {n : ℕ} {S A : Type u} {P : Type u → Type v} [ProbContext P],
-    (∀ (m : NCatMDP n S A P), NCatMDP n S A P) →
-    NCatMDP (n+1) S A P
+    NCatMDP n S A P → NCatMDP (n+1) S A P
 
 end InfinityMDP
 
@@ -404,27 +431,28 @@ structure PolicyKanExtension {S A : Type u} {P : Type u → Type v} [ProbContext
   universal_property : ∀ (Q : S → P A), (∀ s, Q s = policy s) → Q = policy
 
 -- Fixed-point existence via contraction
-theorem value_iteration_convergence {S A : Type u}
-  (mdp : MDP S A PMF) (π : S → A) (K : ℝ≥0)
+theorem value_iteration_convergence {S A : Type u} [Fintype S]
+  (mdp : MDP S A PMF) (π : S → A) (K : NNReal)
   (hK : ContractingWith K (MDPHylomorphism.bellman mdp π))
-  (h0 : edist (fun _ => (0 : ℝ)) (MDPHylomorphism.bellman mdp π (fun _ => 0)) ≠ ∞) :
-  ∃ v_star : S → ℝ, IsFixedPt (MDPHylomorphism.bellman mdp π) v_star := by
-  simpa using (ContractingWith.exists_fixedPoint hK (x := fun _ => 0) h0)
+  (h0 : edist (fun _ => (0 : ℝ)) (MDPHylomorphism.bellman mdp π (fun _ => (0 : ℝ))) ≠ ⊤) :
+  ∃ v_star : S → ℝ, Function.IsFixedPt (MDPHylomorphism.bellman mdp π) v_star := by
+  rcases ContractingWith.exists_fixedPoint hK (x := fun _ => (0 : ℝ)) h0 with ⟨v, hv, -⟩
+  exact ⟨v, hv⟩
 
 theorem value_iteration_convergence_discount {S A : Type u} [Fintype S]
   (mdp : MDP S A PMF) (π : S → A) (hdisc : |MDP.discount mdp| < 1) :
-  ∃ v_star : S → ℝ, IsFixedPt (MDPHylomorphism.bellman mdp π) v_star := by
+  ∃ v_star : S → ℝ, Function.IsFixedPt (MDPHylomorphism.bellman mdp π) v_star := by
   have hK :=
     MDPHylomorphism.bellman_contracting_discount (mdp := mdp) (π := π) hdisc
-  have h0 : edist (fun _ => (0 : ℝ)) (MDPHylomorphism.bellman mdp π (fun _ => 0)) ≠ ∞ := by
-    simpa using (edist_ne_top (fun _ => (0 : ℝ)) (MDPHylomorphism.bellman mdp π (fun _ => 0)))
+  have h0 : edist (fun _ => (0 : ℝ)) (MDPHylomorphism.bellman mdp π (fun _ => (0 : ℝ))) ≠ ⊤ := by
+    simpa using (edist_ne_top (fun _ => (0 : ℝ)) (MDPHylomorphism.bellman mdp π (fun _ => (0 : ℝ))))
   simpa using
     (value_iteration_convergence (mdp := mdp) (π := π)
       (K := Real.toNNReal |MDP.discount mdp|) (hK := hK) (h0 := h0))
 
 -- Policy improvement (extensional)
 theorem policy_improvement_categorical {S A : Type u} {P : Type u → Type v} [ProbContext P]
-  (mdp : MDP S A P) (π : S → A) :
+  (_mdp : MDP S A P) (π : S → A) :
   ∃ π' : S → A, ∀ s, π' s = π s := by
   -- Use adjunction between policies and value functions
   exact ⟨π, by intro s; rfl⟩
@@ -437,16 +465,48 @@ namespace Examples
 -- Discrete probability monad (PMF alias)
 abbrev DiscreteProbMonad : Type u → Type u := ProbDist
 
+-- Deterministic Bellman/update loop (computable)
+def bellmanDet {S A : Type u} (trans : S → A → S) (reward : S → A → S → ℝ) (discount : ℝ)
+  (π : S → A) (v : S → ℝ) : S → ℝ :=
+  fun s =>
+    let a := π s
+    let s' := trans s a
+    reward s a s' + discount * v s'
+
+def policyEvalLoopDet {S A : Type u} (trans : S → A → S) (reward : S → A → S → ℝ) (discount : ℝ)
+  (π : S → A) (n : ℕ) (v0 : S → ℝ) : S → ℝ :=
+  Nat.rec v0 (fun _ v => bellmanDet trans reward discount π v) n
+
+def bellmanDetRat {S A : Type u} (trans : S → A → S) (reward : S → A → S → Rat) (discount : Rat)
+  (π : S → A) (v : S → Rat) : S → Rat :=
+  fun s =>
+    let a := π s
+    let s' := trans s a
+    reward s a s' + discount * v s'
+
+def policyEvalLoopDetRat {S A : Type u} (trans : S → A → S) (reward : S → A → S → Rat)
+  (discount : Rat) (π : S → A) (n : ℕ) (v0 : S → Rat) : S → Rat :=
+  Nat.rec v0 (fun _ v => bellmanDetRat trans reward discount π v) n
+
+-- Small gridworld rewards (goal + step cost)
+def gridGoal : Fin 2 × Fin 2 := (⟨1, by decide⟩, ⟨1, by decide⟩)
+
+def gridReward (_s : Fin 2 × Fin 2) (_a : Fin 4) (s' : Fin 2 × Fin 2) : ℝ :=
+  if s' = gridGoal then 10 else -1
+
+def gridRewardRat (_s : Fin 2 × Fin 2) (_a : Fin 4) (s' : Fin 2 × Fin 2) : Rat :=
+  if s' = gridGoal then 10 else -1
+
 -- Simple deterministic grid (stay-put)
-def gridWorldMDP : MDP (ℕ × ℕ) (Fin 4) DiscreteProbMonad :=
+noncomputable def gridWorldMDP : MDP (ℕ × ℕ) (Fin 4) DiscreteProbMonad :=
   MDP.SimpleMDP
-    (fun s a => PMF.pure s) -- Transition function (stay put)
-    (fun s a s' => 0) -- Reward function
+    (fun s _ => PMF.pure s) -- Transition function (stay put)
+    (fun _ _ _ => 0) -- Reward function
     0.9 -- Discount factor
 
-def zeroDiscountMDP (n m : ℕ) : MDP (Fin (n + 1)) (Fin (m + 1)) DiscreteProbMonad :=
+noncomputable def zeroDiscountMDP (n m : ℕ) : MDP (Fin (n + 1)) (Fin (m + 1)) DiscreteProbMonad :=
   MDP.SimpleMDP
-    (fun s a => PMF.pure s)
+    (fun s _ => PMF.pure s)
     (fun _ _ _ => 0)
     0
 
@@ -459,14 +519,14 @@ theorem zeroDiscountMDP_contracting (n m : ℕ) :
   apply MDPHylomorphism.bellman_contracting_zero_discount
   simp [zeroDiscountMDP, MDP.discount]
 
-def deterministicMDP {S : Type u} {A : Type v}
+noncomputable def deterministicMDP {S : Type u} {A : Type v}
   (trans : S → A → S) (reward : S → A → S → ℝ) (discount : ℝ) :
   MDP S A DiscreteProbMonad :=
   MDP.SimpleMDP (fun s a => PMF.pure (trans s a)) reward discount
 
-def stochasticMDP_ofFintype {S : Type u} {A : Type v} [Fintype S]
-  (trans : S → A → S → ℝ≥0∞) (reward : S → A → S → ℝ) (discount : ℝ)
-  (hprob : ∀ s a, (∑ s', trans s a s') = (1 : ℝ≥0∞)) :
+noncomputable def stochasticMDP_ofFintype {S : Type u} {A : Type v} [Fintype S]
+  (trans : S → A → S → ENNReal) (reward : S → A → S → ℝ) (discount : ℝ)
+  (hprob : ∀ s a, (∑ s', trans s a s') = (1 : ENNReal)) :
   MDP S A DiscreteProbMonad :=
   MDP.SimpleMDP (fun s a => PMF.ofFintype (trans s a) (hprob s a)) reward discount
 
@@ -477,17 +537,32 @@ def gridStep (s : Fin 2 × Fin 2) (a : Fin 4) : Fin 2 × Fin 2 :=
   | 2 => (s.1, ⟨1, by decide⟩) -- up
   | _ => (s.1, ⟨0, by decide⟩) -- down
 
-def gridTrans (s : Fin 2 × Fin 2) (a : Fin 4) (s' : Fin 2 × Fin 2) : ℝ≥0∞ :=
+def gridTrans (s : Fin 2 × Fin 2) (a : Fin 4) (s' : Fin 2 × Fin 2) : ENNReal :=
   if s' = gridStep s a then 1 else 0
 
 theorem gridTrans_prob (s : Fin 2 × Fin 2) (a : Fin 4) :
-  (∑ s', gridTrans s a s') = (1 : ℝ≥0∞) := by
+  (∑ s', gridTrans s a s') = (1 : ENNReal) := by
   classical
-  simpa [gridTrans] using
-    (Fintype.sum_ite_eq' (i := gridStep s a) (f := fun _ => (1 : ℝ≥0∞)))
+  simp [gridTrans]
 
-def smallGridMDP : MDP (Fin 2 × Fin 2) (Fin 4) DiscreteProbMonad :=
-  stochasticMDP_ofFintype gridTrans (fun _ _ _ => 0) 0.9 (by intro s a; simpa using gridTrans_prob s a)
+noncomputable def smallGridMDP : MDP (Fin 2 × Fin 2) (Fin 4) DiscreteProbMonad :=
+  stochasticMDP_ofFintype gridTrans gridReward 0.9 (by intro s a; simpa using gridTrans_prob s a)
+
+-- Example policy/value for policy evaluation
+def gridPolicyRight : Fin 2 × Fin 2 → Fin 4 := fun _ => 0
+
+def gridV0 : Fin 2 × Fin 2 → ℝ := fun _ => 0
+
+noncomputable def gridPolicyEval (n : ℕ) : Fin 2 × Fin 2 → ℝ :=
+  MDPHylomorphism.policyEvalLoop smallGridMDP gridPolicyRight n gridV0
+
+def gridPolicyEvalDet (n : ℕ) : Fin 2 × Fin 2 → ℝ :=
+  policyEvalLoopDet gridStep gridReward 0.9 gridPolicyRight n gridV0
+
+def gridV0Rat : Fin 2 × Fin 2 → Rat := fun _ => 0
+
+def gridPolicyEvalDetRat (n : ℕ) : Fin 2 × Fin 2 → Rat :=
+  policyEvalLoopDetRat gridStep gridRewardRat (9 / 10) gridPolicyRight n gridV0Rat
 
 end Examples
 
@@ -495,7 +570,7 @@ end Examples
 namespace Proofs
 
 -- Functoriality consequences
-theorem mdp_functor_laws {S A : Type u} {P Q : Type u → Type v}
+theorem mdp_functor_laws {P Q : Type u → Type v}
   [ProbContext P] [ProbContext Q] (F : ∀ α, P α → Q α)
   (natural : ∀ α β (f : α → β) (px : P α),
     ProbContext.map f (F α px) = F β (ProbContext.map f px)) :
@@ -514,11 +589,12 @@ theorem mdp_functor_laws {S A : Type u} {P Q : Type u → Type v}
       _ = F γ (ProbContext.map g (ProbContext.map f px)) := by
             simpa using (natural (α := β) (β := γ) (f := g) (px := ProbContext.map f px))
       _ = F γ (ProbContext.map (g ∘ f) px) := by
-            simpa using (ProbContext.map_comp (g := g) (f := f) (m := px))
+            simpa using
+              (congrArg (F γ) (ProbContext.map_comp (g := g) (f := f) (m := px))).symm
 
 -- Composition produces a product MDP
 theorem mdp_composition_optimal {S₁ S₂ A : Type u} {P : Type u → Type v} [ProbContext P]
-  (mdp₁ : MDP S₁ A P) (mdp₂ : MDP S₂ A P)
+  (_mdp₁ : MDP S₁ A P) (_mdp₂ : MDP S₂ A P)
   (compose : S₁ × S₂ → A → P (S₁ × S₂)) :
   ∃ mdp : MDP (S₁ × S₂) A P, MDP.trans mdp = compose := by
   refine ⟨MDP.SimpleMDP compose (fun _ _ _ => 0) 0, rfl⟩

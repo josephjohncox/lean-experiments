@@ -1,20 +1,21 @@
 -- Proof strategies for monad laws over GADT probability monads
 import Mathlib.CategoryTheory.Monad.Basic
+import Mathlib.Data.Real.Basic
 
 universe u v
 
--- Approach 1: Normalization by evaluation (NbE)
+-- Normalization by evaluation (NbE)
 namespace NormalizationApproach
 
 -- Normal forms
-inductive ProbNormal (α : Type u) : Type u where
+inductive ProbNormal (α : Type u) : Type (u+1) where
   | Dirac : α → ProbNormal α
   | Discrete : List (α × ℝ) → ProbNormal α
 
 -- GADT with normalization
-inductive ProbDist (α : Type u) : Type u where
+inductive ProbDist : Type u → Type (u+1) where
   | Normal : ProbNormal α → ProbDist α
-  | Bind : ∀ {β : Type u}, ProbDist β → (β → ProbDist α) → ProbDist α
+  | Bind : ProbDist α → (α → ProbDist β) → ProbDist β
 
 -- Smart constructors (normalizing)
 def pure {α : Type u} (a : α) : ProbDist α :=
@@ -32,14 +33,14 @@ theorem left_id {α β : Type u} (a : α) (f : α → ProbDist β) :
 
 end NormalizationApproach
 
--- Approach 2: Church encoding (continuations)
+-- Church encoding (continuations)
 namespace ChurchEncoding
 
 -- Distributions as bind eliminators
 def ProbDist (α : Type u) := ∀ (β : Type u), (α → β → ℝ) → (β → ℝ)
 
 def pure {α : Type u} (a : α) : ProbDist α :=
-  fun β k => k a
+  fun _ k => k a
 
 def bind {α β : Type u} (m : ProbDist α) (f : α → ProbDist β) : ProbDist β :=
   fun γ k => m γ (fun a => f a γ k)
@@ -56,16 +57,16 @@ theorem assoc {α β γ : Type u} (m : ProbDist α) (f : α → ProbDist β) (g 
 
 end ChurchEncoding
 
--- Approach 3: Algebraic effects and handlers
+-- Algebraic effects and handlers
 namespace AlgebraicEffects
 
 -- Operations
-inductive ProbOp (α : Type u) : Type u where
+inductive ProbOp (α : Type u) : Type (u+1) where
   | Sample : List (α × ℝ) → ProbOp α
   | Uniform : List α → ProbOp α
 
 -- Free monad
-inductive Free (Op : Type u → Type u) (α : Type u) : Type u where
+inductive Free (Op : Type u → Type (u+1)) (α : Type u) : Type (u+1) where
   | Pure : α → Free Op α
   | Op : ∀ {β : Type u}, Op β → (β → Free Op α) → Free Op α
 
@@ -88,10 +89,10 @@ theorem right_id {α : Type u} : ∀ (m : ProbDist α), bind m pure = m
 
 end AlgebraicEffects
 
--- Approach 4: QIIT sketch (not supported in Lean)
+-- QIIT outline (Lean currently lacks QIITs)
 namespace QuotientInductiveInductive
 
--- Pseudo-code: Lean does not support QIITs directly.
+-- Pseudo-code; Lean does not support QIITs directly.
 
 /-
 mutual
@@ -111,7 +112,7 @@ end
 
 end QuotientInductiveInductive
 
--- Approach 5: Shallow embedding with deep constructors
+-- Shallow embedding with deep constructors
 namespace ShallowDeep
 
 -- Shallow probability measure
@@ -126,7 +127,7 @@ def dirac {α : Type u} [DecidableEq α] (a : α) : Prob α :=
 def discrete {α : Type u} [DecidableEq α] (l : List (α × ℝ)) : Prob α :=
   ⟨fun x => (l.filter (fun p => p.1 = x)).map (·.2) |>.sum, sorry⟩
 
--- Bind operation (sketch)
+-- Bind operation (outline)
 noncomputable def bind {α β : Type u} (m : Prob α) (f : α → Prob β) : Prob β :=
   ⟨fun b => sorry, -- ∫ₐ m.measure a * (f a).measure b
    sorry⟩
@@ -134,9 +135,8 @@ noncomputable def bind {α β : Type u} (m : Prob α) (f : α → Prob β) : Pro
 -- Laws via functional extensionality
 theorem left_id {α β : Type u} [DecidableEq α] [DecidableEq β] (a : α) (f : α → Prob β) :
   bind (dirac a) f = f a := by
-  ext b
-  simp [bind, dirac]
-  sorry -- Calculation
+  -- Proof uses extensionality of measures.
+  sorry
 
 end ShallowDeep
 
