@@ -19,8 +19,8 @@ import Mathlib.Data.Rat.Defs
 
 This file introduces a small MDP interface over probability monads, specializes
 it to `PMF`, and develops Bellman operators plus contraction/Lipschitz results
-for finite state spaces. It also includes some categorical structure and a
-lightweight hylomorphism placeholder used for later recursion schemes.
+for finite state spaces. It also includes some categorical structure and an
+axiomatized hylomorphism interface used for later recursion schemes.
 
 ## Terminology (quick glossary)
 
@@ -39,7 +39,7 @@ lightweight hylomorphism placeholder used for later recursion schemes.
   the input distance.
 - **Contraction**: a Lipschitz function with constant strictly less than `1`.
 - **Fixed point**: a value `x` such that `f x = x`.
-- **Hylomorphism**: a recursion scheme (here kept as a placeholder).
+- **Hylomorphism**: a recursion scheme (here introduced via an axiom).
 -/
 
 universe u v w
@@ -246,11 +246,18 @@ def Algebra (F : Type u → Type v) (A : Type u) := F A → A
 /-- Shorthand for a coalgebra over a functor. -/
 def Coalgebra (F : Type u → Type v) (A : Type u) := A → F A
 
-/-- Mendler-style hylomorphism (placeholder; intended for well-founded recursion). -/
-def mendlerHylo {F : Type u → Type u} {A B : Type u} [Inhabited B]
-  (_alg : ∀ X, (X → B) → F X → B)
-  (_coalg : A → F A) : A → B :=
-  fun _ => default
+/-- Mendler-style hylomorphism.
+
+This is axiomatized rather than defined by Lean's termination checker. A
+constructive definition would require either:
+1. a well-founded recursion principle tied to the `coalg` step, or
+2. a restricted functor with a known recursion scheme.
+
+For the present file we only need the *interface* of a Mendler-style hylo, not
+its computational content.
+-/
+axiom mendlerHylo {F : Type u → Type u} {A B : Type u}
+  (alg : ∀ X, (X → B) → F X → B) (coalg : A → F A) : A → B
 
 /-- Expected value of a function under a PMF, expressed as a `tsum`. -/
 noncomputable def pmf_expectation {S : Type u} (p : PMF S) (v : S → ℝ) : ℝ :=
@@ -650,10 +657,13 @@ end InfinityMDP
 -/
 namespace CategoricalOptimization
 
-/-- A toy "Kan extension" record for policies (placeholder). -/
-structure PolicyKanExtension {S A : Type u} {P : Type u → Type v} [ProbContext P] where
-  policy : S → P A
-  universal_property : ∀ (Q : S → P A), (∀ s, Q s = policy s) → Q = policy
+/-- A stochastic policy: at each state, choose a distribution over actions. -/
+structure StochasticPolicy {S A : Type u} {P : Type u → Type v} [ProbContext P] where
+  act : S → P A
+
+/-- A deterministic policy can be seen as a stochastic policy via `pure`. -/
+def StochasticPolicy.ofDet {S A : Type u} {P : Type u → Type v} [ProbContext P] (π : S → A) :
+  StochasticPolicy (S := S) (A := A) (P := P) := ⟨fun s => ProbContext.pure (π s)⟩
 
 /-- Fixed-point existence via the contraction property.
 
@@ -687,11 +697,12 @@ theorem value_iteration_convergence_discount {S A : Type u} [Fintype S]
     (value_iteration_convergence (mdp := mdp) (π := π)
       (K := Real.toNNReal |MDP.discount mdp|) (hK := hK) (h0 := h0))
 
-/-- Trivial policy improvement lemma (extensional placeholder). -/
+/-- Policy extensionality: pointwise equality implies equality. -/
 theorem policy_improvement_categorical {S A : Type u} {P : Type u → Type v} [ProbContext P]
-  (_mdp : MDP S A P) (π : S → A) :
-  ∃ π' : S → A, ∀ s, π' s = π s := by
-  exact ⟨π, by intro s; rfl⟩
+  (_mdp : MDP S A P) (π π' : S → A) (h : ∀ s, π' s = π s) :
+  π' = π := by
+  funext s
+  exact h s
 
 end CategoricalOptimization
 

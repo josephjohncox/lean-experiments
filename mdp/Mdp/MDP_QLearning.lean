@@ -2,6 +2,7 @@ import Mdp.MDP_Basic
 import Mathlib.Data.Finset.BooleanAlgebra
 import Mathlib.Topology.MetricSpace.Contracting
 import Mathlib.Topology.MetricSpace.Pseudo.Pi
+import Mathlib.Topology.Metrizable.Basic
 import Mathlib.Analysis.Normed.Group.Constructions
 import Mathlib.MeasureTheory.Function.ConditionalExpectation.Real
 import Mathlib.Probability.Process.Filtration
@@ -720,6 +721,14 @@ structure Sample (S A : Type u) where
   a : A
   s' : S
 
+/-- We use the discrete σ-algebra on samples: every subset is measurable. -/
+instance instMeasurableSpaceSample (S A : Type u) : MeasurableSpace (Sample S A) :=
+  ⊤
+
+instance instDiscreteMeasurableSpaceSample (S A : Type u) :
+    DiscreteMeasurableSpace (Sample S A) := by
+  infer_instance
+
 /-- Iterated Q-learning sequence driven by a sample stream.
 
 This is primitive recursion on `n` (the natural-number **recursor**):
@@ -1019,6 +1028,165 @@ theorem qLearnNoiseProcess_abs_le_bound (mdp : MDP S A PMF) (α : ℕ → ℝ)
       (s := (sample n ω).s) (a := (sample n ω).a) (s' := (sample n ω).s')
   simpa [qLearnNoiseProcess, B] using hnoise
 
+/-!
+### Adaptedness and measurability (assumption-driven)
+
+To avoid duplicating a large amount of measurability boilerplate, we package the
+exact hypotheses needed to propagate adaptedness through the recursive update.
+This mirrors textbook assumptions: the sample stream is adapted and the update
+maps are **measurable** (not necessarily continuous) in their arguments.
+
+We equip `Sample S A` with the discrete σ-algebra above; this is the intended
+σ-algebra for the finite/discrete examples later in the file.
+-/
+section Adaptedness
+
+open MeasureTheory
+
+variable [MeasurableSpace Ω]
+variable {S A : Type u} [Fintype S] [Fintype A] [Nonempty A]
+variable [TopologicalSpace (Sample S A)]
+variable [TopologicalSpace (QLearning.Q S A)]
+variable [MeasurableSpace (QLearning.Q S A)]
+
+local notation "Qsa" => QLearning.Q S A
+
+/-- Sample-stream assumptions sufficient to propagate adaptedness.
+
+We keep both the filtration-adapted hypothesis and explicit measurability
+assumptions; the latter lets us compose with `Measurable.comp` without assuming
+continuity, while the strongly-measurable fields allow a direct
+`StronglyMeasurable.comp_measurable` step in the adaptedness proofs.
+-/
+structure QLearnSampleAssumptions
+  (ℱ : Filtration ℕ (inferInstance : MeasurableSpace Ω))
+  (mdp : MDP S A PMF) (α : ℕ → ℝ)
+  (sample : ℕ → Ω → Sample S A) (q0 : Qsa) : Prop where
+  sample_adapted : Adapted ℱ sample
+  sample_measurable : ∀ n, Measurable[ℱ n] (sample n)
+  step_measurable :
+    ∀ n, Measurable fun p : Qsa × Sample S A =>
+      qLearnStep mdp (α n) p.1 p.2.s p.2.a p.2.s'
+  step_stronglyMeasurable :
+    ∀ n, StronglyMeasurable fun p : Qsa × Sample S A =>
+      qLearnStep mdp (α n) p.1 p.2.s p.2.a p.2.s'
+  noise_measurable :
+    Measurable fun p : Qsa × Sample S A =>
+      qLearnNoise mdp p.1 p.2.s p.2.a p.2.s'
+  noise_stronglyMeasurable :
+    StronglyMeasurable fun p : Qsa × Sample S A =>
+      qLearnNoise mdp p.1 p.2.s p.2.a p.2.s'
+
+omit [Fintype S] [MeasurableSpace Qsa] in
+/-- In the fully discrete case, all update/noise maps are automatically continuous. -/
+lemma qLearnStep_continuous_of_discrete (mdp : MDP S A PMF) (α : ℝ)
+    [DiscreteTopology Qsa] [DiscreteTopology (Sample S A)] :
+    Continuous fun p : Qsa × Sample S A =>
+      qLearnStep mdp α p.1 p.2.s p.2.a p.2.s' := by
+  simpa using
+    (continuous_of_discreteTopology
+      (f := fun p : Qsa × Sample S A =>
+        qLearnStep mdp α p.1 p.2.s p.2.a p.2.s'))
+
+omit [Fintype S] [MeasurableSpace Qsa] in
+/-- In the fully discrete case, the noise map is continuous. -/
+lemma qLearnNoise_continuous_of_discrete (mdp : MDP S A PMF)
+    [DiscreteTopology Qsa] [DiscreteTopology (Sample S A)] :
+    Continuous fun p : Qsa × Sample S A =>
+      qLearnNoise mdp p.1 p.2.s p.2.a p.2.s' := by
+  simpa using
+    (continuous_of_discreteTopology
+      (f := fun p : Qsa × Sample S A =>
+        qLearnNoise mdp p.1 p.2.s p.2.a p.2.s'))
+
+omit [Fintype S] in
+/-- The Q-learning iterates are measurable under the sample-stream assumptions. -/
+theorem qLearnSeqω_measurable_of_assumptions (mdp : MDP S A PMF) (α : ℕ → ℝ)
+  (sample : ℕ → Ω → Sample S A) (q0 : Qsa)
+  (ℱ : Filtration ℕ (inferInstance : MeasurableSpace Ω))
+  (h : QLearnSampleAssumptions (S := S) (A := A) ℱ mdp α sample q0) :
+  ∀ n, Measurable[ℱ n] (fun ω => qLearnSeqω mdp α sample q0 n ω) := by
+  intro n
+  induction n with
+  | zero =>
+      let _ : MeasurableSpace Ω := ℱ 0
+      exact (measurable_const : Measurable (fun _ : Ω => q0))
+  | succ n ih =>
+      have hqn : Measurable[ℱ (n + 1)] (fun ω => qLearnSeqω mdp α sample q0 n ω) :=
+        Measurable.mono (ma := ℱ n) (ma' := ℱ (n + 1))
+          ih (ℱ.mono (Nat.le_succ n)) le_rfl
+      have hsample : Measurable[ℱ (n + 1)] (sample n) :=
+        Measurable.mono (ma := ℱ n) (ma' := ℱ (n + 1))
+          (h.sample_measurable n) (ℱ.mono (Nat.le_succ n)) le_rfl
+      have hpair : Measurable[ℱ (n + 1)]
+          (fun ω => (qLearnSeqω mdp α sample q0 n ω, sample n ω)) :=
+        hqn.prodMk hsample
+      have hstep : Measurable[ℱ (n + 1)]
+          (fun ω =>
+            qLearnStep mdp (α n)
+              (qLearnSeqω mdp α sample q0 n ω)
+              (sample n ω).s (sample n ω).a (sample n ω).s') :=
+        (h.step_measurable n).comp hpair
+      simpa [qLearnSeqω] using hstep
+
+omit [Fintype S] in
+/-- The pathwise Q-learning process is adapted under the sample-stream assumptions. -/
+theorem qLearnSeqω_adapted_of_assumptions (mdp : MDP S A PMF) (α : ℕ → ℝ)
+  (sample : ℕ → Ω → Sample S A) (q0 : Qsa)
+  (ℱ : Filtration ℕ (inferInstance : MeasurableSpace Ω))
+  (h : QLearnSampleAssumptions (S := S) (A := A) ℱ mdp α sample q0) :
+  Adapted ℱ (qLearnSeqω mdp α sample q0) := by
+  intro n
+  induction n with
+  | zero =>
+      simpa using (stronglyMeasurable_const :
+        StronglyMeasurable[ℱ 0] (fun _ : Ω => q0))
+  | succ n ih =>
+      have hqn_meas : Measurable[ℱ (n + 1)]
+          (fun ω => qLearnSeqω mdp α sample q0 n ω) :=
+        Measurable.mono (ma := ℱ n) (ma' := ℱ (n + 1))
+          (qLearnSeqω_measurable_of_assumptions (mdp := mdp) (α := α)
+            (sample := sample) (q0 := q0) (ℱ := ℱ) h n)
+          (ℱ.mono (Nat.le_succ n)) le_rfl
+      have hsample_meas : Measurable[ℱ (n + 1)] (sample n) :=
+        Measurable.mono (ma := ℱ n) (ma' := ℱ (n + 1))
+          (h.sample_measurable n) (ℱ.mono (Nat.le_succ n)) le_rfl
+      have hpair_meas : Measurable[ℱ (n + 1)]
+          (fun ω => (qLearnSeqω mdp α sample q0 n ω, sample n ω)) :=
+        hqn_meas.prodMk hsample_meas
+      have hstep : StronglyMeasurable[ℱ (n + 1)]
+          (fun ω =>
+            qLearnStep mdp (α n)
+              (qLearnSeqω mdp α sample q0 n ω)
+              (sample n ω).s (sample n ω).a (sample n ω).s') :=
+        (h.step_stronglyMeasurable n).comp_measurable hpair_meas
+      simpa [qLearnSeqω] using hstep
+
+omit [Fintype S] in
+/-- The noise process is adapted under the sample-stream assumptions. -/
+theorem qLearnNoiseProcess_adapted_of_assumptions (mdp : MDP S A PMF) (α : ℕ → ℝ)
+  (sample : ℕ → Ω → Sample S A) (q0 : Qsa)
+  (ℱ : Filtration ℕ (inferInstance : MeasurableSpace Ω))
+  (h : QLearnSampleAssumptions (S := S) (A := A) ℱ mdp α sample q0) :
+  Adapted ℱ (qLearnNoiseProcess mdp α sample q0) := by
+  intro n
+  have hqn_meas : Measurable[ℱ n]
+      (fun ω => qLearnSeqω mdp α sample q0 n ω) :=
+    qLearnSeqω_measurable_of_assumptions (mdp := mdp) (α := α)
+      (sample := sample) (q0 := q0) (ℱ := ℱ) h n
+  have hsample_meas : Measurable[ℱ n] (sample n) := h.sample_measurable n
+  have hpair_meas : Measurable[ℱ n]
+      (fun ω => (qLearnSeqω mdp α sample q0 n ω, sample n ω)) :=
+    hqn_meas.prodMk hsample_meas
+  have hnoise : StronglyMeasurable[ℱ n]
+      (fun ω =>
+        qLearnNoise mdp (qLearnSeqω mdp α sample q0 n ω)
+          (sample n ω).s (sample n ω).a (sample n ω).s') :=
+    h.noise_stronglyMeasurable.comp_measurable hpair_meas
+  simpa [qLearnNoiseProcess] using hnoise
+
+end Adaptedness
+
 section Measure
 
 open MeasureTheory
@@ -1143,6 +1311,21 @@ axiom qlearning_stochastic_converges
     Function.IsFixedPt (qBellman mdp) qStar ∧
       ∀ᵐ ω ∂ μ, Filter.Tendsto (fun n => qLearnSeqω mdp α sample q0 n ω)
         atTop (nhds qStar)
+
+omit [Fintype S] [IsProbabilityMeasure μ] in
+/-- Derive convergence from the stochastic convergence axiom plus bundled assumptions. -/
+theorem qlearning_converges_ae_of_axiom (mdp : MDP S A PMF) (α : ℕ → ℝ)
+  (sample : ℕ → Ω → Sample S A) (q0 : Q)
+  (ℱ : Filtration ℕ mΩ)
+  (h : QLearningStochasticAssumptions μ mdp α sample q0 ℱ) :
+  ∃ qStar : Q,
+    Function.IsFixedPt (qBellman mdp) qStar ∧
+      ∀ᵐ ω ∂ μ, Filter.Tendsto (fun n => qLearnSeqω mdp α sample q0 n ω)
+        atTop (nhds qStar) :=
+  qlearning_stochastic_converges (mdp := mdp) (α := α) (sample := sample) (q0 := q0)
+    (ℱ := ℱ) (hdisc := h.discount_lt_one) (hR := h.bounded_reward) (hB0 := h.bounded_q0)
+    (hRM := h.robbins_monro) (hvis := h.visits_inf) (hAdapted := h.noise_adapted)
+    (hMD := h.noise_martingale)
 
 omit [Fintype S] in
 /-- The noise process is integrable when it is adapted and uniformly bounded. -/
