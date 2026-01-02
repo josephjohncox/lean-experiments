@@ -164,7 +164,8 @@ Proof sketch:
 3. The `Op` case uses `simp` (the simplifier), `congr` (to reduce equality of
    structured expressions to their components), and **function extensionality**
    (`funext`) to reduce equality of functions produced by `Op` to pointwise
-   equality.
+   equality. In other words, `congr` peels off the constructor, and `funext`
+   proves the remaining function equality by checking each input.
 -/
 theorem right_id {α : Type u} : ∀ (m : ProbDist α), bind m pure = m
   | Free.Pure a => rfl

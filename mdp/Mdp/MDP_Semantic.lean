@@ -51,12 +51,15 @@ structure ProbDist (α : Type u) where
 /-- Extensionality for `ProbDist`.
 
 This lemma is tagged with `@[ext]`, so the `ext` tactic can reduce equality
-of `ProbDist` values to equality of their fields.
+of `ProbDist` values to equality of their fields. **Function extensionality**
+(`funext`) says two functions are equal if they give the same value at every
+input.
 
 Proof sketch:
 1. Case split both records.
-2. Use **function extensionality** (`funext`) on the `prob` fields.
-3. Apply subsingleton elimination to the proof fields.
+2. Apply `funext` to show the `prob` fields agree pointwise.
+3. Use **subsingleton elimination** (`Subsingleton.elim`) to identify the
+   proof fields, since there is at most one proof of a proposition.
 -/
 @[ext] theorem ProbDist.ext {α : Type u} {p q : ProbDist α}
   (h : ∀ a, p.prob a = q.prob a) : p = q := by
@@ -157,8 +160,9 @@ noncomputable def ProbDistM (α : Type u) := ProbDist α (Classical.decEq α)
 
 Proof sketch:
 1. `pure` is the Dirac constructor in the syntax.
-2. `bind` lifts to the quotient using `Quot.lift` (the **recursor** for
-   quotient types).
+2. `bind` lifts to the quotient using `Quot.lift`, the **recursor** for
+   quotient types: to define a function out of a quotient, give a function on
+   representatives and prove it respects the equivalence relation.
 3. Well-definedness follows from semantic equivalence and pointwise rewriting.
 
 We use `rw` to rewrite goals using previously established equalities.

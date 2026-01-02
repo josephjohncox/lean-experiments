@@ -5,6 +5,7 @@ import Mathlib.Topology.MetricSpace.Pseudo.Pi
 import Mathlib.Analysis.Normed.Group.Constructions
 import Mathlib.MeasureTheory.Function.ConditionalExpectation.Real
 import Mathlib.Probability.Process.Filtration
+import Mathlib.Probability.Process.Adapted
 import Mathlib.Tactic
 
 /-!
@@ -719,7 +720,12 @@ structure Sample (S A : Type u) where
   a : A
   s' : S
 
-/-- Iterated Q-learning sequence driven by a sample stream. -/
+/-- Iterated Q-learning sequence driven by a sample stream.
+
+This is primitive recursion on `n` (the natural-number **recursor**):
+`qLearnSeq ... 0` is the initial table `q0`, and the step case `n+1` applies
+one Q-learning update to the previous table.
+-/
 noncomputable def qLearnSeq (mdp : MDP S A PMF) (α : ℕ → ℝ)
   (sample : ℕ → Sample S A) (q0 : Q) : ℕ → Q
   | 0 => q0
@@ -728,7 +734,12 @@ noncomputable def qLearnSeq (mdp : MDP S A PMF) (α : ℕ → ℝ)
         (sample n).s (sample n).a (sample n).s'
 
 omit [Fintype S] in
-/-- One Q-learning step at the sampled pair, written in stochastic-approximation form. -/
+/-- One Q-learning step at the sampled pair, written in stochastic-approximation form.
+
+The proof is just unfolding + `simp`. The simplifier uses definitional
+equalities and tagged rewrite lemmas to normalize the recursive definition
+and the `qLearnStep` update.
+-/
 theorem qLearnSeq_step_decompose (mdp : MDP S A PMF) (α : ℕ → ℝ)
   (sample : ℕ → Sample S A) (q0 : Q) (n : ℕ) :
   let qn := qLearnSeq mdp α sample q0 n
@@ -740,6 +751,133 @@ theorem qLearnSeq_step_decompose (mdp : MDP S A PMF) (α : ℕ → ℝ)
       α n * qLearnNoise mdp qn s a s' := by
   classical
   simp [qLearnSeq, qLearnStep_decompose]
+
+/-!
+### Uniform bounds for Q-learning iterates
+
+This section shows that if rewards are bounded, the discount satisfies
+`|discount| < 1`, and the step sizes are in `[0,1]`, then the Q-learning
+sequence stays uniformly bounded.
+-/
+
+omit [Fintype S] [Fintype A] [Nonempty A] in
+/-- A convex combination of bounded values stays bounded. -/
+lemma abs_convex_le {x y B a : ℝ} (hx : |x| ≤ B) (hy : |y| ≤ B)
+  (ha0 : 0 ≤ a) (ha1 : a ≤ 1) :
+  |(1 - a) * x + a * y| ≤ B := by
+  have h1 : 0 ≤ 1 - a := by linarith
+  have htri : |(1 - a) * x + a * y| ≤ |(1 - a) * x| + |a * y| :=
+    abs_add_le _ _
+  calc
+    |(1 - a) * x + a * y| ≤ |(1 - a) * x| + |a * y| := htri
+    _ = (1 - a) * |x| + a * |y| := by
+        simp [abs_mul, abs_of_nonneg h1, abs_of_nonneg ha0]
+    _ ≤ (1 - a) * B + a * B := by
+        exact add_le_add (mul_le_mul_of_nonneg_left hx h1) (mul_le_mul_of_nonneg_left hy ha0)
+    _ = B := by ring
+
+/-- A convenient global bound for Q-learning when `|discount| < 1`. -/
+noncomputable def qLearnBound (mdp : MDP S A PMF) (R B0 : ℝ) : ℝ :=
+  max B0 (R / (1 - |MDP.discount mdp|))
+
+omit [Fintype S] in
+/-- If rewards and the initial Q-table are bounded, then all Q-learning iterates
+stay within a single global bound `qLearnBound`.
+
+Proof sketch:
+1. Choose `B = max B0 (R / (1 - |discount|))`. This ensures
+   `R + |discount| * B ≤ B`.
+2. **Induction** on `n`: base case `0`, step case `n+1`. (Induction is the
+   standard “prove at `0` and advance to `n+1`” principle for naturals.)
+3. At the updated pair, use the convex-combination lemma `abs_convex_le`.
+4. Elsewhere, the value is unchanged, so the bound is preserved.
+-/
+theorem qLearnSeq_abs_le_bound (mdp : MDP S A PMF) (α : ℕ → ℝ)
+  (sample : ℕ → Sample S A) (q0 : Q)
+  (R B0 : ℝ) (hR : ∀ s a s', |MDP.reward mdp s a s'| ≤ R)
+  (hB0 : ∀ s a, |q0 s a| ≤ B0)
+  (hdisc : |MDP.discount mdp| < 1)
+  (hα : ∀ n, 0 ≤ α n ∧ α n ≤ 1) :
+  ∀ n s a, |qLearnSeq mdp α sample q0 n s a| ≤ qLearnBound mdp R B0 := by
+  classical
+  let B := qLearnBound mdp R B0
+  have hB_ge_B0 : B0 ≤ B := by
+    simp [qLearnBound, B]
+  have hden : 0 < 1 - |MDP.discount mdp| := by
+    linarith
+  have hB_ge_R : R / (1 - |MDP.discount mdp|) ≤ B := by
+    simp [qLearnBound, B]
+  have hB_bound :
+      R + |MDP.discount mdp| * B ≤ B := by
+    have hmul : R ≤ B * (1 - |MDP.discount mdp|) := by
+      have h := (mul_le_mul_of_nonneg_right hB_ge_R (le_of_lt hden))
+      have hR_eq :
+          (R / (1 - |MDP.discount mdp|)) * (1 - |MDP.discount mdp|) = R := by
+        field_simp [hden.ne']
+      simpa [hR_eq, mul_comm, mul_left_comm, mul_assoc] using h
+    have hmul' : R ≤ B - |MDP.discount mdp| * B := by
+      have : B * (1 - |MDP.discount mdp|) = B - |MDP.discount mdp| * B := by ring
+      simpa [this] using hmul
+    linarith
+  intro n
+  induction n with
+  | zero =>
+      intro s a
+      have hq0 : |q0 s a| ≤ B0 := hB0 s a
+      exact le_trans hq0 hB_ge_B0
+  | succ n ih =>
+      intro s a
+      have hq : ∀ s a, |qLearnSeq mdp α sample q0 n s a| ≤ B := ih
+      by_cases h : s = (sample n).s ∧ a = (sample n).a
+      · -- updated pair
+        have hα0 : 0 ≤ α n := (hα n).1
+        have hα1 : α n ≤ 1 := (hα n).2
+        have hqsa : |qLearnSeq mdp α sample q0 n s a| ≤ B := hq s a
+        have hqmax : ∀ s', |qMax (qLearnSeq mdp α sample q0 n) s'| ≤ B := by
+          intro s'
+          exact qMax_abs_le_of_bounded (q := qLearnSeq mdp α sample q0 n) (B := B) hq s'
+        have htarget :
+            |MDP.reward mdp s a (sample n).s' +
+                MDP.discount mdp * qMax (qLearnSeq mdp α sample q0 n) (sample n).s'| ≤ B := by
+          have hreward := hR s a (sample n).s'
+          have hmul : |MDP.discount mdp * qMax (qLearnSeq mdp α sample q0 n) (sample n).s'|
+              ≤ |MDP.discount mdp| * B := by
+            calc
+              |MDP.discount mdp * qMax (qLearnSeq mdp α sample q0 n) (sample n).s'|
+                  = |MDP.discount mdp| *
+                      |qMax (qLearnSeq mdp α sample q0 n) (sample n).s'| := by
+                        simp [abs_mul]
+              _ ≤ |MDP.discount mdp| * B := by
+                    exact mul_le_mul_of_nonneg_left (hqmax (sample n).s') (abs_nonneg _)
+          have hsum :
+              |MDP.reward mdp s a (sample n).s' +
+                  MDP.discount mdp * qMax (qLearnSeq mdp α sample q0 n) (sample n).s'|
+                ≤ |MDP.reward mdp s a (sample n).s'| +
+                    |MDP.discount mdp * qMax (qLearnSeq mdp α sample q0 n) (sample n).s'| := by
+              simpa using
+                (abs_add_le (MDP.reward mdp s a (sample n).s')
+                  (MDP.discount mdp * qMax (qLearnSeq mdp α sample q0 n) (sample n).s'))
+          have hsum' :
+              |MDP.reward mdp s a (sample n).s' +
+                  MDP.discount mdp * qMax (qLearnSeq mdp α sample q0 n) (sample n).s'|
+                ≤ R + |MDP.discount mdp| * B := by
+              exact le_trans hsum (add_le_add hreward hmul)
+          exact le_trans hsum' hB_bound
+        have hstep :
+            (qLearnSeq mdp α sample q0 (n + 1)) s a =
+              (1 - α n) * qLearnSeq mdp α sample q0 n s a +
+                α n *
+                  (MDP.reward mdp s a (sample n).s' +
+                    MDP.discount mdp * qMax (qLearnSeq mdp α sample q0 n) (sample n).s') := by
+          simp [qLearnSeq, qLearnStep, h]
+        have hbound :=
+          abs_convex_le (hx := hqsa) (hy := htarget) (ha0 := hα0) (ha1 := hα1)
+        simpa [hstep] using hbound
+      · -- untouched pair
+        have hstep : (qLearnSeq mdp α sample q0 (n + 1)) s a =
+            qLearnSeq mdp α sample q0 n s a := by
+          simp [qLearnSeq, qLearnStep, h]
+        simpa [hstep] using hq s a
 
 /-- Packaged assumptions for Q-learning convergence (finite case). -/
 structure QLearningConvergenceAssumptions (mdp : MDP S A PMF) (α : ℕ → ℝ)
@@ -780,6 +918,14 @@ mean zero *given the past* — the standard **martingale-difference** property.
 
 The convergence theorem below is still packaged as an assumption, but now the
 assumptions explicitly reference the filtration and conditional expectations.
+
+Diagonalization note:
+In the finite `(S,A)` setting we can avoid diagonal arguments because all
+coordinates are finitely many. For countable (or general) state-action spaces,
+one typically uses a **diagonalization** or **diagonal subsequence** argument
+to extract almost-sure convergence across all coordinates simultaneously.
+Categorically, this mirrors the way fixed-point or limit constructions are
+assembled coordinatewise and then reassembled into a global object.
 -/
 section Stochastic
 
@@ -816,6 +962,63 @@ theorem qLearnSeqω_step_decompose (mdp : MDP S A PMF) (α : ℕ → ℝ)
   classical
   simp [qLearnSeqω, qLearnStep_decompose]
 
+omit [Fintype S] in
+/-- For a fixed outcome `ω`, the pathwise sequence agrees with the deterministic
+sequence driven by the sample stream `n ↦ sample n ω`. -/
+theorem qLearnSeqω_eq_qLearnSeq (mdp : MDP S A PMF) (α : ℕ → ℝ)
+  (sample : ℕ → Ω → Sample S A) (q0 : Q) (ω : Ω) :
+  ∀ n, qLearnSeqω mdp α sample q0 n ω =
+    qLearnSeq mdp α (fun n => sample n ω) q0 n := by
+  intro n
+  induction n with
+  | zero =>
+      rfl
+  | succ n ih =>
+      simp [qLearnSeqω, qLearnSeq, ih]
+
+omit [Fintype S] in
+/-- Uniform bound for the pathwise Q-learning sequence. -/
+theorem qLearnSeqω_abs_le_bound (mdp : MDP S A PMF) (α : ℕ → ℝ)
+  (sample : ℕ → Ω → Sample S A) (q0 : Q)
+  (R B0 : ℝ) (hR : ∀ s a s', |MDP.reward mdp s a s'| ≤ R)
+  (hB0 : ∀ s a, |q0 s a| ≤ B0)
+  (hdisc : |MDP.discount mdp| < 1)
+  (hα : ∀ n, 0 ≤ α n ∧ α n ≤ 1) :
+  ∀ n ω s a, |qLearnSeqω mdp α sample q0 n ω s a| ≤ qLearnBound mdp R B0 := by
+  intro n ω s a
+  have hEq := qLearnSeqω_eq_qLearnSeq (mdp := mdp) (α := α) (sample := sample) (q0 := q0) (ω := ω)
+  have hdet :=
+    qLearnSeq_abs_le_bound (mdp := mdp) (α := α) (sample := fun n => sample n ω) (q0 := q0)
+      (R := R) (B0 := B0) (hR := hR) (hB0 := hB0) (hdisc := hdisc) (hα := hα)
+  simpa [hEq n] using hdet n s a
+
+/-- Uniform bound on the noise process along a sample stream. -/
+theorem qLearnNoiseProcess_abs_le_bound (mdp : MDP S A PMF) (α : ℕ → ℝ)
+  (sample : ℕ → Ω → Sample S A) (q0 : Q)
+  (R B0 : ℝ) (hR : ∀ s a s', |MDP.reward mdp s a s'| ≤ R) (hRnonneg : 0 ≤ R)
+  (hB0 : ∀ s a, |q0 s a| ≤ B0) (hB0nonneg : 0 ≤ B0)
+  (hdisc : |MDP.discount mdp| < 1)
+  (hα : ∀ n, 0 ≤ α n ∧ α n ≤ 1) :
+  ∀ n ω, |qLearnNoiseProcess mdp α sample q0 n ω|
+    ≤ 2 * (R + |MDP.discount mdp| * qLearnBound mdp R B0) := by
+  intro n ω
+  let B := qLearnBound mdp R B0
+  have hBnonneg : 0 ≤ B := by
+    exact le_trans hB0nonneg (le_max_left _ _)
+  have hq : ∀ s a, |qLearnSeqω mdp α sample q0 n ω s a| ≤ B := by
+    intro s a
+    have hbound :=
+      qLearnSeqω_abs_le_bound (mdp := mdp) (α := α) (sample := sample) (q0 := q0)
+        (R := R) (B0 := B0) (hR := hR) (hB0 := hB0) (hdisc := hdisc) (hα := hα)
+    simpa [B] using hbound n ω s a
+  have hnoise :=
+    qLearnNoise_abs_le_of_bounded (mdp := mdp)
+      (q := qLearnSeqω mdp α sample q0 n ω)
+      (B := B) (R := R) (hB := hq) (hBnonneg := hBnonneg)
+      (hR := hR) (hRnonneg := hRnonneg)
+      (s := (sample n ω).s) (a := (sample n ω).a) (s' := (sample n ω).s')
+  simpa [qLearnNoiseProcess, B] using hnoise
+
 section Measure
 
 open MeasureTheory
@@ -823,6 +1026,24 @@ open MeasureTheory
 variable [MeasurableSpace Ω] {μ : Measure Ω} [IsProbabilityMeasure μ]
 
 local notation "mΩ" => (inferInstance : MeasurableSpace Ω)
+
+/-- Extract measurability of a coordinate from adaptedness. -/
+theorem adapted_stronglyMeasurable (ℱ : Filtration ℕ mΩ) (ξ : ℕ → Ω → ℝ)
+  (h : MeasureTheory.Adapted ℱ ξ) (n : ℕ) : StronglyMeasurable (ξ n) := by
+  simpa using (MeasureTheory.Adapted.stronglyMeasurable (f := ℱ) (u := ξ) h (i := n))
+
+/-- On a finite measure space, a uniformly bounded adapted process is integrable. -/
+theorem integrable_of_bounded_adapted (ℱ : Filtration ℕ mΩ) (ξ : ℕ → Ω → ℝ)
+  (h : MeasureTheory.Adapted ℱ ξ) (C : ℝ)
+  (hC : ∀ n, ∀ᵐ ω ∂ μ, |ξ n ω| ≤ C) :
+  ∀ n, Integrable (ξ n) μ := by
+  intro n
+  have hsm : AEStronglyMeasurable (ξ n) μ :=
+    (adapted_stronglyMeasurable (ℱ := ℱ) (ξ := ξ) h n).aestronglyMeasurable
+  have hbound : ∀ᵐ ω ∂ μ, ‖ξ n ω‖ ≤ C := by
+    filter_upwards [hC n] with ω hω
+    simpa [Real.norm_eq_abs] using hω
+  exact Integrable.of_bound (μ := μ) hsm C hbound
 
 /-- A real-valued process is a martingale-difference sequence if its conditional
 expectation given the past is zero at every step. -/
@@ -860,6 +1081,7 @@ structure QLearningStochasticAssumptions (μ : Measure Ω)
   robbins_monro : RobbinsMonro α
   visits_inf : ∀ s a,
     ∀ᵐ ω ∂ μ, Set.Infinite {n | (sample n ω).s = s ∧ (sample n ω).a = a}
+  noise_adapted : MeasureTheory.Adapted ℱ (qLearnNoiseProcess mdp α sample q0)
   noise_martingale :
     MartingaleDifference μ ℱ (qLearnNoiseProcess mdp α sample q0)
   converges_ae :
@@ -885,6 +1107,52 @@ theorem qlearning_converges_ae (mdp : MDP S A PMF) (α : ℕ → ℝ)
       ∀ᵐ ω ∂ μ, Filter.Tendsto (fun n => qLearnSeqω mdp α sample q0 n ω)
         atTop (nhds qStar) :=
   h.converges_ae
+
+omit [Fintype S] in
+/-- **Axiom (stochastic approximation convergence)** for Q-learning.
+
+Roadmap for a future full proof (classical in stochastic approximation):
+1. Use bounded rewards, `|discount| < 1`, and `α n ∈ (0,1]` to show the Q-learning
+   iterates are uniformly bounded (`qLearnSeq_abs_le_bound` and
+   `qLearnNoiseProcess_abs_le_bound`).
+2. Combine adaptedness and uniform boundedness to obtain integrability of the
+   noise (`qLearnNoiseProcess_integrable`).
+3. Apply the martingale-difference condition (conditional expectation zero) to
+   identify the noise as a martingale increment.
+4. Invoke a Robbins–Monro / stochastic approximation convergence theorem for
+   contracting operators (e.g., Borkar–Meyn or Jaakkola–Jordan–Singh style).
+5. Use contraction of `qBellman` to identify the almost-sure limit with its
+   unique fixed point (optimal Q-value).
+
+This axiom isolates the heavy measure-theoretic machinery while keeping the
+rest of the development executable and well-typed.
+-/
+axiom qlearning_stochastic_converges
+  (mdp : MDP S A PMF) (α : ℕ → ℝ)
+  (sample : ℕ → Ω → Sample S A) (q0 : Q)
+  (ℱ : Filtration ℕ mΩ)
+  (hdisc : |MDP.discount mdp| < 1)
+  (hR : ∃ R, ∀ s a s', |MDP.reward mdp s a s'| ≤ R)
+  (hB0 : ∃ B, ∀ s a, |q0 s a| ≤ B)
+  (hRM : RobbinsMonro α)
+  (hvis : ∀ s a, ∀ᵐ ω ∂ μ,
+    Set.Infinite {n | (sample n ω).s = s ∧ (sample n ω).a = a})
+  (hAdapted : MeasureTheory.Adapted ℱ (qLearnNoiseProcess mdp α sample q0))
+  (hMD : MartingaleDifference μ ℱ (qLearnNoiseProcess mdp α sample q0)) :
+  ∃ qStar : Q,
+    Function.IsFixedPt (qBellman mdp) qStar ∧
+      ∀ᵐ ω ∂ μ, Filter.Tendsto (fun n => qLearnSeqω mdp α sample q0 n ω)
+        atTop (nhds qStar)
+
+omit [Fintype S] in
+/-- The noise process is integrable when it is adapted and uniformly bounded. -/
+theorem qLearnNoiseProcess_integrable (mdp : MDP S A PMF) (α : ℕ → ℝ)
+  (sample : ℕ → Ω → Sample S A) (q0 : Q) (ℱ : Filtration ℕ mΩ)
+  (C : ℝ) (hAdapted : MeasureTheory.Adapted ℱ (qLearnNoiseProcess mdp α sample q0))
+  (hC : ∀ n, ∀ᵐ ω ∂ μ, |qLearnNoiseProcess mdp α sample q0 n ω| ≤ C) :
+  ∀ n, Integrable (qLearnNoiseProcess mdp α sample q0 n) μ :=
+  integrable_of_bounded_adapted (ℱ := ℱ) (ξ := qLearnNoiseProcess mdp α sample q0)
+    hAdapted C hC
 
 end Measure
 
