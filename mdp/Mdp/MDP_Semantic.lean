@@ -241,7 +241,7 @@ noncomputable def pureDD {α : Type u} (a : α) : DiscreteDist α := by
   · intro b hb
     have hb' : b ≠ a := by
       simpa using hb
-    simp [hb', hb]
+    simp [hb']
 
 noncomputable def bindDD {α β : Type u} (m : DiscreteDist α) (f : α → DiscreteDist β) :
   DiscreteDist β := by
@@ -306,7 +306,7 @@ noncomputable def bindDD {α β : Type u} (m : DiscreteDist α) (f : α → Disc
     have hb' : b ∉ (f a).support := by
       intro hb'
       exact hb (Finset.mem_biUnion.mpr ⟨a, ha, hb'⟩)
-    simp [prob', (f a).support_spec b hb']
+    simp [(f a).support_spec b hb']
 
 noncomputable instance : ProbMonad (fun α => DiscreteDist α) where
   pure := pureDD
@@ -323,19 +323,38 @@ noncomputable instance : ProbMonad (fun α => DiscreteDist α) where
     classical
     apply DiscreteDist.ext
     · ext b
-      simp [bindDD, pureDD, Finset.mem_biUnion]
+      simp [bindDD, pureDD]
     · intro b
       by_cases hb : b ∈ m.support
       · have hsum :
           Finset.sum m.support (fun a => m.prob a * (if b = a then 1 else 0)) = m.prob b := by
             classical
-            refine Finset.sum_eq_single b ?_ ?_ ?_
-            · exact hb
-            · intro a ha hne
-              simp [hne]
-            · intro hb'
-              exact (m.support_spec b hb') ▸ by simp
-          simpa [bindDD, pureDD, hsum]
+          have h :=
+            (Finset.sum_eq_single b
+              (fun a ha hne => by
+                have hne' : b ≠ a := by
+                  simpa [ne_comm] using hne
+                calc
+                  m.prob a * (if b = a then 1 else 0) = m.prob a * 0 := by
+                    simp [hne']
+                  _ = 0 := by
+                    simp)
+              (fun hb' => by
+                have hbzero : m.prob b = 0 := m.support_spec b hb'
+                calc
+                  m.prob b * (if b = b then 1 else 0) = m.prob b * 1 := by
+                    simp
+                  _ = 0 := by
+                    simp [hbzero]))
+          simpa using h
+        have hsum' :
+            Finset.sum m.support (fun a => m.prob a * (pureDD a).prob b) = m.prob b := by
+          simpa [pureDD] using hsum
+        have hprob :
+            (bindDD m pureDD).prob b =
+              Finset.sum m.support (fun a => m.prob a * (pureDD a).prob b) := by
+          simp [bindDD]
+        exact hprob.trans hsum'
       · have hsum :
           Finset.sum m.support (fun a => m.prob a * (if b = a then 1 else 0)) = 0 := by
             classical
@@ -345,17 +364,118 @@ noncomputable instance : ProbMonad (fun α => DiscreteDist α) where
               intro hba
               exact hb (hba ▸ ha)
             simp [hne]
-          have hb' : m.prob b = 0 := m.support_spec b hb
-          simpa [bindDD, pureDD, hsum, hb']
+        have hb' : m.prob b = 0 := m.support_spec b hb
+        have hsum' :
+            Finset.sum m.support (fun a => m.prob a * (if b = a then 1 else 0)) = m.prob b := by
+          simp [hb']
+        have hsum'' :
+            Finset.sum m.support (fun a => m.prob a * (pureDD a).prob b) = m.prob b := by
+          simpa [pureDD] using hsum'
+        have hprob :
+            (bindDD m pureDD).prob b =
+              Finset.sum m.support (fun a => m.prob a * (pureDD a).prob b) := by
+          simp [bindDD]
+        exact hprob.trans hsum''
   assoc := by
     intro α β γ m f g
     classical
     apply DiscreteDist.ext
     · ext b
-      simp [bindDD, Finset.mem_biUnion]
+      constructor
+      · intro hb
+        have hb' :
+            ∃ a, (∃ a_1 ∈ m.support, a ∈ (f a_1).support) ∧ b ∈ (g a).support := by
+          simpa [bindDD, Finset.mem_biUnion] using hb
+        rcases hb' with ⟨a, ⟨a_1, ha_1, ha⟩, hb⟩
+        have hb'' :
+            b ∈ (bindDD (f a_1) g).support := by
+          have : b ∈ (f a_1).support.biUnion (fun x => (g x).support) :=
+            Finset.mem_biUnion.mpr ⟨a, ha, hb⟩
+          simpa [bindDD] using this
+        have : b ∈ m.support.biUnion (fun x => (bindDD (f x) g).support) :=
+          Finset.mem_biUnion.mpr ⟨a_1, ha_1, hb''⟩
+        simpa [bindDD] using this
+      · intro hb
+        have hb' :
+            ∃ a ∈ m.support, ∃ a_1 ∈ (f a).support, b ∈ (g a_1).support := by
+          simpa [bindDD, Finset.mem_biUnion] using hb
+        rcases hb' with ⟨a, ha, a_1, ha_1, hb⟩
+        have hb'' :
+            b ∈ (bindDD (bindDD m f) g).support := by
+          have : b ∈ (m.support.biUnion fun x => (f x).support).biUnion (fun x => (g x).support) :=
+            Finset.mem_biUnion.mpr ⟨a_1, Finset.mem_biUnion.mpr ⟨a, ha, ha_1⟩, hb⟩
+          simpa [bindDD] using this
+        exact hb''
     · intro c
-      simp [bindDD, Finset.mul_sum, Finset.sum_mul, Finset.sum_product, Finset.sum_product_right,
-        Finset.sum_congr, Finset.sum_sigma]
+      classical
+      let support1 : Finset β := m.support.biUnion (fun a => (f a).support)
+      have hcomm :
+          Finset.sum support1
+              (fun b => Finset.sum m.support (fun a => m.prob a * (f a).prob b * (g b).prob c)) =
+            Finset.sum m.support
+              (fun a => Finset.sum support1 (fun b => m.prob a * (f a).prob b * (g b).prob c)) := by
+        classical
+        calc
+          Finset.sum support1
+              (fun b => Finset.sum m.support (fun a => m.prob a * (f a).prob b * (g b).prob c)) =
+              Finset.sum (support1 ×ˢ m.support)
+                (fun x => m.prob x.2 * (f x.2).prob x.1 * (g x.1).prob c) := by
+                symm
+                simpa using
+                  (Finset.sum_product (s := support1) (t := m.support)
+                    (f := fun x => m.prob x.2 * (f x.2).prob x.1 * (g x.1).prob c))
+          _ = Finset.sum m.support
+                (fun a => Finset.sum support1 (fun b => m.prob a * (f a).prob b * (g b).prob c)) := by
+                simpa using
+                  (Finset.sum_product_right (s := support1) (t := m.support)
+                    (f := fun x => m.prob x.2 * (f x.2).prob x.1 * (g x.1).prob c))
+      calc
+        (bindDD (bindDD m f) g).prob c =
+            Finset.sum support1
+              (fun b =>
+                (Finset.sum m.support (fun a => m.prob a * (f a).prob b)) * (g b).prob c) := by
+              simp [bindDD, support1]
+        _ = Finset.sum support1
+              (fun b =>
+                Finset.sum m.support (fun a => m.prob a * (f a).prob b * (g b).prob c)) := by
+              refine Finset.sum_congr rfl ?_
+              intro b hb
+              have hsum :=
+                (Finset.sum_mul (s := m.support)
+                  (f := fun a => m.prob a * (f a).prob b)
+                  (a := (g b).prob c))
+              simpa [mul_assoc] using hsum
+        _ = Finset.sum m.support
+              (fun a => Finset.sum support1 (fun b => m.prob a * (f a).prob b * (g b).prob c)) := hcomm
+        _ = Finset.sum m.support
+              (fun a => m.prob a * Finset.sum support1 (fun b => (f a).prob b * (g b).prob c)) := by
+              refine Finset.sum_congr rfl ?_
+              intro a ha
+              have hsum :=
+                (Finset.mul_sum (a := m.prob a) (s := support1)
+                  (f := fun b => (f a).prob b * (g b).prob c))
+              simpa [mul_assoc] using hsum.symm
+        _ = Finset.sum m.support
+              (fun a => m.prob a * Finset.sum (f a).support (fun b => (f a).prob b * (g b).prob c)) := by
+              refine Finset.sum_congr rfl ?_
+              intro a ha
+              have hsubset : (f a).support ⊆ support1 := by
+                intro b hb
+                exact Finset.mem_biUnion.mpr ⟨a, ha, hb⟩
+              have hsum :
+                  Finset.sum support1 (fun b => (f a).prob b * (g b).prob c) =
+                    Finset.sum (f a).support (fun b => (f a).prob b * (g b).prob c) := by
+                classical
+                symm
+                refine Finset.sum_subset hsubset ?_
+                intro b hb hbnot
+                have hbzero : (f a).prob b = 0 := (f a).support_spec b hbnot
+                simp [hbzero]
+              simp [hsum]
+        _ = Finset.sum m.support (fun a => m.prob a * (bindDD (f a) g).prob c) := by
+              simp [bindDD]
+        _ = (bindDD m (fun x => bindDD (f x) g)).prob c := by
+              simp [bindDD]
 
 -- MDPs over the abstract monad
 structure MDP (S : Type u) (A : Type v) (M : Type u → Type w) [ProbMonad M] where

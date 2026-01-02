@@ -18,7 +18,7 @@ import Mathlib.Data.Rat.Defs
 
 universe u v w
 
-set_option diagnostics true
+set_option diagnostics false
 
 open scoped BigOperators
 open Function
