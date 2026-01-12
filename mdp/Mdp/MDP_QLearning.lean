@@ -1099,6 +1099,24 @@ lemma qLearnNoise_continuous_of_discrete (mdp : MDP S A PMF)
       (f := fun p : Qsa × Sample S A =>
         qLearnNoise mdp p.1 p.2.s p.2.a p.2.s'))
 
+omit [Fintype S] [Fintype A] [Nonempty A] [TopologicalSpace (Sample S A)]
+    [TopologicalSpace Qsa] [MeasurableSpace Qsa] in
+/-- When `Qsa` is second countable (true in the finite/discrete examples), we can
+derive `SecondCountableTopologyEither` for the product with samples. -/
+lemma secondCountableTopologyEither_of_secondCountable
+    [TopologicalSpace Qsa] [TopologicalSpace (Sample S A)]
+    [SecondCountableTopology Qsa] :
+    SecondCountableTopologyEither (Qsa × Sample S A) Qsa := by
+  infer_instance
+
+omit [Nonempty A] in
+/-- Finite state/action sets give a second-countable topology on `Qsa = S → A → ℝ`. -/
+lemma secondCountableTopology_Qsa_of_fintype
+    {S A : Type u} [Fintype S] [Fintype A] :
+    SecondCountableTopology (QLearning.Q S A) := by
+  infer_instance
+
+omit [MeasurableSpace Ω] in
 omit [MeasurableSpace Ω] in
 /-- Package discrete continuity into `QLearnSampleAssumptions`.
 
@@ -1113,9 +1131,8 @@ lemma qLearnSampleAssumptions_of_discrete
   [TopologicalSpace (Sample S A)] [TopologicalSpace (QLearning.Q S A)]
   [MeasurableSpace (QLearning.Q S A)] [BorelSpace (QLearning.Q S A)]
   [OpensMeasurableSpace (QLearning.Q S A × Sample S A)]
-  (hmet : TopologicalSpace.PseudoMetrizableSpace (QLearning.Q S A))
-  (hscEither :
-    SecondCountableTopologyEither (QLearning.Q S A × Sample S A) (QLearning.Q S A))
+  [TopologicalSpace.PseudoMetrizableSpace (QLearning.Q S A)]
+  [SecondCountableTopology (QLearning.Q S A)]
   [DiscreteTopology (QLearning.Q S A)] [DiscreteTopology (Sample S A)]
   (mdp : MDP S A PMF) (α : ℕ → ℝ)
   (sample : ℕ → Ω → Sample S A) (q0 : QLearning.Q S A)
@@ -1123,9 +1140,8 @@ lemma qLearnSampleAssumptions_of_discrete
   (hsample : Adapted ℱ sample)
   (hsample_meas : ∀ n, Measurable[ℱ n] (sample n)) :
   QLearnSampleAssumptions (S := S) (A := A) ℱ mdp α sample q0 := by
-  letI : TopologicalSpace.PseudoMetrizableSpace (QLearning.Q S A) := hmet
   letI : SecondCountableTopologyEither (QLearning.Q S A × Sample S A) (QLearning.Q S A) :=
-    hscEither
+    secondCountableTopologyEither_of_secondCountable (S := S) (A := A)
   refine ⟨hsample, hsample_meas, ?_, ?_, ?_, ?_⟩
   · intro n
     have hcont :
@@ -1151,6 +1167,28 @@ lemma qLearnSampleAssumptions_of_discrete
           qLearnNoise mdp p.1 p.2.s p.2.a p.2.s' :=
       qLearnNoise_continuous_of_discrete (mdp := mdp)
     exact hcont.stronglyMeasurable
+
+omit [MeasurableSpace Ω] in
+/-- Wrapper that injects the finite-case second-countable instance and delegates. -/
+lemma qLearnSampleAssumptions_of_discrete_fintype
+  [MeasurableSpace Ω]
+  {S A : Type u} [Fintype S] [Fintype A] [Nonempty A]
+  [TopologicalSpace (Sample S A)]
+  [MeasurableSpace (QLearning.Q S A)] [BorelSpace (QLearning.Q S A)]
+  [OpensMeasurableSpace (QLearning.Q S A × Sample S A)]
+  [TopologicalSpace.PseudoMetrizableSpace (QLearning.Q S A)]
+  [DiscreteTopology (QLearning.Q S A)] [DiscreteTopology (Sample S A)]
+  (mdp : MDP S A PMF) (α : ℕ → ℝ)
+  (sample : ℕ → Ω → Sample S A) (q0 : QLearning.Q S A)
+  (ℱ : Filtration ℕ (inferInstance : MeasurableSpace Ω))
+  (hsample : Adapted ℱ sample)
+  (hsample_meas : ∀ n, Measurable[ℱ n] (sample n)) :
+  QLearnSampleAssumptions (S := S) (A := A) ℱ mdp α sample q0 := by
+  letI : SecondCountableTopology (QLearning.Q S A) :=
+    secondCountableTopology_Qsa_of_fintype (S := S) (A := A)
+  exact qLearnSampleAssumptions_of_discrete (mdp := mdp) (α := α)
+    (sample := sample) (q0 := q0) (ℱ := ℱ)
+    (hsample := hsample) (hsample_meas := hsample_meas)
 
 omit [Fintype S] in
 /-- The Q-learning iterates are measurable under the sample-stream assumptions. -/
