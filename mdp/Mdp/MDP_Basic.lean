@@ -19,8 +19,8 @@ import Mathlib.Data.Rat.Defs
 
 This file introduces a small MDP interface over probability monads, specializes
 it to `PMF`, and develops Bellman operators plus contraction/Lipschitz results
-for finite state spaces. It also includes some categorical structure and an
-axiomatized hylomorphism interface used for later recursion schemes.
+for finite state spaces. It also includes some categorical structure and a
+well-founded hylomorphism interface used for later recursion schemes.
 
 ## Terminology (quick glossary)
 
@@ -39,7 +39,7 @@ axiomatized hylomorphism interface used for later recursion schemes.
   the input distance.
 - **Contraction**: a Lipschitz function with constant strictly less than `1`.
 - **Fixed point**: a value `x` such that `f x = x`.
-- **Hylomorphism**: a recursion scheme (here introduced via an axiom).
+- **Hylomorphism**: a recursion scheme (here implemented via well-founded recursion).
 -/
 
 universe u v w
@@ -246,18 +246,26 @@ def Algebra (F : Type u → Type v) (A : Type u) := F A → A
 /-- Shorthand for a coalgebra over a functor. -/
 def Coalgebra (F : Type u → Type v) (A : Type u) := A → F A
 
-/-- Mendler-style hylomorphism.
+/-- Mendler-style hylomorphism for `StateValueF`, defined by well-founded recursion.
 
-This is axiomatized rather than defined by Lean's termination checker. A
-constructive definition would require either:
-1. a well-founded recursion principle tied to the `coalg` step, or
-2. a restricted functor with a known recursion scheme.
-
-For the present file we only need the *interface* of a Mendler-style hylo, not
-its computational content.
+We take a well-founded relation `r` on the seed type `A` as explicit termination
+data. The Mendler algebra receives a *total* recursion function `A → B`; we
+implement it using the well-founded recursor, returning `default` on arguments
+that are not provably smaller. Correctness therefore assumes the algebra only
+queries the recursion function on `r`-smaller values (e.g., those produced by
+the coalgebra).
 -/
-axiom mendlerHylo {F : Type u → Type u} {A B : Type u}
-  (alg : ∀ X, (X → B) → F X → B) (coalg : A → F A) : A → B
+noncomputable def mendlerHylo {S A : Type u} {P : Type u → Type v} [ProbContext P]
+  {Seed B : Type u} [Inhabited B]
+  (r : Seed → Seed → Prop) (hr : WellFounded r)
+  (alg : ∀ X, (X → B) → StateValueF S A P X → B)
+  (coalg : Seed → StateValueF S A P Seed) : Seed → B := by
+  classical
+  refine hr.fix ?_
+  intro a rec
+  let step : Seed → B := fun a' =>
+    if h : r a' a then rec a' h else default
+  exact alg Seed step (coalg a)
 
 /-- Expected value of a function under a PMF, expressed as a `tsum`. -/
 noncomputable def pmf_expectation {S : Type u} (p : PMF S) (v : S → ℝ) : ℝ :=
